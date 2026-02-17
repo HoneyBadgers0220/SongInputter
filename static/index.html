@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SongRate — YouTube Music Rating App</title>
+    <meta name="description"
+        content="Rate songs playing on YouTube Music in real time. Track your ratings and analyze your listening habits.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <!-- ─── Header ─────────────────────────────────────────── -->
+    <header class="app-header">
+        <div class="header-left">
+            <div class="logo">
+                <span class="logo-icon">♫</span>
+                <span class="logo-text">SongRate</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-dot"></span>
+                <span class="status-text">Connecting…</span>
+            </div>
+            <div class="header-actions">
+                <button class="btn-icon" id="btnSettings" title="Settings">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3" />
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                    </svg>
+                </button>
+                <button class="btn-icon" id="btnExportCSV" title="Export as CSV">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    <span>CSV</span>
+                </button>
+                <button class="btn-icon" id="btnExportJSON" title="Export as JSON">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    <span>JSON</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ─── Main Content ───────────────────────────────────── -->
+    <main class="app-main">
+        <!-- Now Playing Section -->
+        <section class="now-playing-section" id="nowPlayingSection">
+            <h2 class="section-title">Now Playing</h2>
+
+            <!-- Empty state -->
+            <div class="now-playing-empty" id="nowPlayingEmpty">
+                <div class="empty-icon">🎧</div>
+                <p>Play a song on YouTube Music to get started</p>
+                <p class="empty-sub">The app checks every few seconds for new tracks</p>
+            </div>
+
+            <!-- Track card -->
+            <div class="now-playing-card hidden" id="nowPlayingCard">
+                <div class="np-album-art-wrap">
+                    <img class="np-album-art" id="npAlbumArt" src="" alt="Album artwork">
+                    <div class="np-playing-indicator">
+                        <span></span><span></span><span></span><span></span>
+                    </div>
+                </div>
+                <div class="np-info">
+                    <h3 class="np-title" id="npTitle"></h3>
+                    <p class="np-artist" id="npArtist"></p>
+                    <div class="np-meta">
+                        <span class="np-album" id="npAlbum"></span>
+                        <span class="np-year" id="npYear"></span>
+                    </div>
+
+                    <!-- Already rated badge -->
+                    <div class="np-already-rated hidden" id="npAlreadyRated">
+                        <span class="rated-badge">★ Already Rated</span>
+                        <span class="rated-value" id="npExistingRating"></span>
+                        <button class="btn-sm btn-edit-existing" id="npEditExisting">Edit</button>
+                    </div>
+
+                    <!-- Rating input -->
+                    <div class="np-rating-form" id="npRatingForm">
+                        <label class="rating-label">Rate this song</label>
+                        <div class="rating-input-group">
+                            <input type="range" id="npRatingSlider" min="1" max="10" step="1" value="5"
+                                class="rating-slider">
+                            <span class="rating-display" id="npRatingDisplay">5</span>
+                            <span class="rating-range-label" id="npRangeLabel">(1–10)</span>
+                        </div>
+                    </div>
+                    <div class="rating-extras">
+                        <input type="text" id="npNotes" placeholder="Add a note (optional)" class="input-notes">
+                        <input type="text" id="npTags" placeholder="Tags: e.g. chill, workout (optional)"
+                            class="input-tags">
+                    </div>
+                    <button class="btn-primary" id="npSubmitRating">
+                        <span>Save Rating</span>
+                    </button>
+                </div>
+            </div>
+            </div>
+        </section>
+
+        <!-- Stats Bar -->
+        <section class="stats-bar" id="statsBar">
+            <div class="stat-card">
+                <span class="stat-value" id="statTotal">0</span>
+                <span class="stat-label">Songs Rated</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="statAverage">—</span>
+                <span class="stat-label">Avg Rating</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="statHighest">—</span>
+                <span class="stat-label">Highest</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="statTopArtist">—</span>
+                <span class="stat-label">Top Artist</span>
+            </div>
+        </section>
+
+        <!-- Rated Songs Section -->
+        <section class="rated-songs-section">
+            <div class="rated-header">
+                <h2 class="section-title">Rated Songs</h2>
+                <div class="rated-controls">
+                    <input type="text" id="searchInput" placeholder="Search songs…" class="input-search">
+                    <select id="sortSelect" class="select-sort">
+                        <option value="ratedAt-desc">Newest First</option>
+                        <option value="ratedAt-asc">Oldest First</option>
+                        <option value="rating-desc">Highest Rated</option>
+                        <option value="rating-asc">Lowest Rated</option>
+                        <option value="artist-asc">Artist A–Z</option>
+                        <option value="title-asc">Title A–Z</option>
+                        <option value="year-desc">Year (Newest)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="rated-grid" id="ratedGrid">
+                <!-- Populated by JS -->
+            </div>
+
+            <div class="rated-empty hidden" id="ratedEmpty">
+                <p>No rated songs yet. Rate your first song above!</p>
+            </div>
+        </section>
+    </main>
+
+    <!-- ─── Edit Modal ─────────────────────────────────────── -->
+    <div class="modal-overlay hidden" id="editModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Edit Song Info</h3>
+                <button class="btn-close" id="modalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editId">
+                <div class="form-group">
+                    <label>Title</label>
+                    <input type="text" id="editTitle" class="input-field">
+                </div>
+                <div class="form-group">
+                    <label>Artist</label>
+                    <input type="text" id="editArtist" class="input-field">
+                </div>
+                <div class="form-group">
+                    <label>Album</label>
+                    <input type="text" id="editAlbum" class="input-field">
+                </div>
+                <div class="form-group">
+                    <label>Year</label>
+                    <input type="text" id="editYear" class="input-field">
+                </div>
+                <div class="form-group">
+                    <label>Rating <span id="editRangeLabel">(1–10)</span></label>
+                    <div class="rating-input-group">
+                        <input type="range" id="editRating" min="1" max="10" step="1" value="5" class="rating-slider">
+                        <span class="rating-display" id="editRatingDisplay">5</span>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Notes</label>
+                <input type="text" id="editNotes" class="input-field">
+            </div>
+            <div class="form-group">
+                <label>Tags (comma-separated)</label>
+                <input type="text" id="editTags" class="input-field">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-danger" id="editDelete">Delete</button>
+            <button class="btn-primary" id="editSave">Save Changes</button>
+        </div>
+    </div>
+    </div>
+
+    <!-- ─── Settings Panel ────────────────────────────────── -->
+    <div class="modal-overlay hidden" id="settingsModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Settings</h3>
+                <button class="btn-close" id="settingsClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Rating Range</label>
+                    <div class="range-config">
+                        <div class="range-field">
+                            <label>Min</label>
+                            <input type="number" id="settingsMin" class="input-field input-sm" value="1">
+                        </div>
+                        <span class="range-separator">to</span>
+                        <div class="range-field">
+                            <label>Max</label>
+                            <input type="number" id="settingsMax" class="input-field input-sm" value="10">
+                        </div>
+                    </div>
+                    <p class="form-hint">Supports any integer range, including negative numbers</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-primary" id="settingsSave">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── Toast ──────────────────────────────────────────── -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
