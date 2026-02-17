@@ -1,7 +1,7 @@
 /**
  * SongRate — YouTube Music Rating App
- * Frontend: simple last-3 anti-flicker, lazy album year enrichment,
- * rating, editing, search/sort, export, configurable settings.
+ * Frontend: last-3 anti-flicker, lazy album year enrichment,
+ * unrated songs auto-capture, rating, editing, search/sort, export, settings.
  */
 
 // ─── State ─────────────────────────────────────────────────────
@@ -9,6 +9,7 @@ let currentTrack = null;
 let recentSongIds = [];          // last 3 confirmed song IDs (anti-flicker)
 const MAX_RECENT = 3;
 let allRatings = [];
+let allUnrated = [];
 let pollInterval = null;
 let appSettings = { ratingMin: 1, ratingMax: 10 };
 const POLL_MS = 5000;
@@ -40,10 +41,16 @@ const dom = {
     statAverage: $("statAverage"),
     statHighest: $("statHighest"),
     statTopArtist: $("statTopArtist"),
+    // Unrated section
+    unratedGrid: $("unratedGrid"),
+    unratedEmpty: $("unratedEmpty"),
+    unratedSearchInput: $("unratedSearchInput"),
+    // Rated section
     ratedGrid: $("ratedGrid"),
     ratedEmpty: $("ratedEmpty"),
     searchInput: $("searchInput"),
     sortSelect: $("sortSelect"),
+    // Edit modal
     editModal: $("editModal"),
     modalClose: $("modalClose"),
     editId: $("editId"),
@@ -58,6 +65,22 @@ const dom = {
     editTags: $("editTags"),
     editSave: $("editSave"),
     editDelete: $("editDelete"),
+    // Rate-unrated modal
+    rateUnratedModal: $("rateUnratedModal"),
+    rateUnratedClose: $("rateUnratedClose"),
+    rateUnratedId: $("rateUnratedId"),
+    rateUnratedArt: $("rateUnratedArt"),
+    rateUnratedTitle: $("rateUnratedTitle"),
+    rateUnratedArtist: $("rateUnratedArtist"),
+    rateUnratedMeta: $("rateUnratedMeta"),
+    rateUnratedRating: $("rateUnratedRating"),
+    rateUnratedRatingDisplay: $("rateUnratedRatingDisplay"),
+    rateUnratedRangeLabel: $("rateUnratedRangeLabel"),
+    rateUnratedNotes: $("rateUnratedNotes"),
+    rateUnratedTags: $("rateUnratedTags"),
+    rateUnratedSave: $("rateUnratedSave"),
+    rateUnratedDismiss: $("rateUnratedDismiss"),
+    // Settings
     settingsModal: $("settingsModal"),
     settingsClose: $("settingsClose"),
     settingsMin: $("settingsMin"),
@@ -74,6 +97,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadSettings();
     checkStatus();
     loadRatings();
+    loadUnrated();
     startPolling();
     bindEvents();
 });
@@ -85,34 +109,54 @@ function bindEvents() {
     dom.editRating.addEventListener("input", () => {
         dom.editRatingDisplay.textContent = dom.editRating.value;
     });
+    dom.rateUnratedRating.addEventListener("input", () => {
+        dom.rateUnratedRatingDisplay.textContent = dom.rateUnratedRating.value;
+    });
     dom.npSubmitRating.addEventListener("click", submitRating);
     dom.npEditExisting.addEventListener("click", () => {
         if (currentTrack && currentTrack.existingRating) {
             openEditModal(currentTrack.existingRating);
         }
     });
+    // Edit modal
     dom.modalClose.addEventListener("click", closeEditModal);
     dom.editModal.addEventListener("click", (e) => {
         if (e.target === dom.editModal) closeEditModal();
     });
     dom.editSave.addEventListener("click", saveEdit);
     dom.editDelete.addEventListener("click", deleteRating);
+    // Rate-unrated modal
+    dom.rateUnratedClose.addEventListener("click", closeRateUnratedModal);
+    dom.rateUnratedModal.addEventListener("click", (e) => {
+        if (e.target === dom.rateUnratedModal) closeRateUnratedModal();
+    });
+    dom.rateUnratedSave.addEventListener("click", saveRateUnrated);
+    dom.rateUnratedDismiss.addEventListener("click", dismissUnrated);
+    // Settings
     dom.btnSettings.addEventListener("click", openSettings);
     dom.settingsClose.addEventListener("click", closeSettings);
     dom.settingsModal.addEventListener("click", (e) => {
         if (e.target === dom.settingsModal) closeSettings();
     });
     dom.settingsSave.addEventListener("click", saveSettings);
+    // Search & sort
     dom.searchInput.addEventListener("input", renderRatedSongs);
     dom.sortSelect.addEventListener("change", renderRatedSongs);
+    dom.unratedSearchInput.addEventListener("input", renderUnratedSongs);
+    // Export
     dom.btnExportCSV.addEventListener("click", () => {
         window.location.href = "/api/export/csv";
     });
     dom.btnExportJSON.addEventListener("click", () => {
         window.location.href = "/api/export/json";
     });
+    // Escape key
     document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") { closeEditModal(); closeSettings(); }
+        if (e.key === "Escape") {
+            closeEditModal();
+            closeRateUnratedModal();
+            closeSettings();
+        }
     });
 }
 
@@ -153,6 +197,10 @@ function applySettingsToUI() {
     dom.editRating.min = min;
     dom.editRating.max = max;
     dom.editRangeLabel.textContent = `(${min}–${max})`;
+
+    dom.rateUnratedRating.min = min;
+    dom.rateUnratedRating.max = max;
+    dom.rateUnratedRangeLabel.textContent = `(${min}–${max})`;
 
     dom.settingsMin.value = min;
     dom.settingsMax.value = max;
@@ -217,6 +265,7 @@ async function checkStatus() {
 //   - If it's different AND in recentSongIds → it's a repeat/flicker, ignore it.
 //   - If it's different AND NOT in recentSongIds → genuinely new song, switch to it.
 //   When we switch, push the OLD song's ID into the recent list (max 3).
+//   If the old song wasn't rated, save it as unrated.
 //
 function startPolling() {
     pollNowPlaying();
@@ -258,10 +307,14 @@ async function pollNowPlaying() {
 }
 
 function acceptTrack(track, animate) {
+    // Save old track as unrated if it wasn't rated and isn't already unrated
+    if (currentTrack && !currentTrack.alreadyRated && !currentTrack.alreadyUnrated) {
+        saveAsUnrated(currentTrack);
+    }
+
     // Push old track into recent list before switching
     if (currentTrack) {
         recentSongIds.push(currentTrack.videoId);
-        // Keep only the last MAX_RECENT
         if (recentSongIds.length > MAX_RECENT) {
             recentSongIds.shift();
         }
@@ -272,6 +325,26 @@ function acceptTrack(track, animate) {
 
     // Lazy-load release year
     enrichYearIfNeeded(currentTrack);
+}
+
+async function saveAsUnrated(track) {
+    const payload = {
+        videoId: track.videoId,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        albumId: track.albumId,
+        year: track.year,
+        albumArt: track.albumArt,
+    };
+    const result = await api("/api/unrated", {
+        method: "POST",
+        body: JSON.stringify(payload),
+    });
+    if (result && result.success) {
+        console.log(`Saved as unrated: "${track.title}"`);
+        loadUnrated(); // refresh the unrated list
+    }
 }
 
 async function enrichYearIfNeeded(track) {
@@ -305,7 +378,6 @@ function showTrackCard(track, animate) {
     dom.npAlbumArt.src = track.albumArt || "";
     dom.npAlbumArt.alt = `${track.album || track.title} album art`;
     dom.npAlbumArt.onerror = function () {
-        // Try YouTube video thumbnail as fallback
         if (track.videoId && !this.src.includes("ytimg.com")) {
             this.src = `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg`;
         } else {
@@ -440,7 +512,7 @@ function renderRatedSongs() {
         .map(
             (r) => `
         <div class="rated-card" data-id="${r.id}" onclick="openEditModal(getRatingById('${r.id}'))">
-            <img class="rated-card-art" src="${r.albumArt || ""}" alt="${r.title}" onerror="this.style.display='none'">
+            <img class="rated-card-art" src="${r.albumArt || ""}" alt="${esc(r.title)}" onerror="this.style.display='none'">
             <div class="rated-card-info">
                 <div class="rated-card-title">${esc(r.title)}</div>
                 <div class="rated-card-artist">${esc(r.artist)}</div>
@@ -457,7 +529,141 @@ window.getRatingById = function (id) {
     return allRatings.find((r) => r.id === id);
 };
 
-// ─── Edit Modal ────────────────────────────────────────────────
+// ─── Unrated Songs ─────────────────────────────────────────────
+async function loadUnrated() {
+    const data = await api("/api/unrated");
+    if (!data) return;
+
+    allUnrated = data.unrated || [];
+    renderUnratedSongs();
+}
+
+function renderUnratedSongs() {
+    const search = dom.unratedSearchInput.value.toLowerCase();
+
+    let filtered = allUnrated.filter((u) => {
+        if (!search) return true;
+        return (
+            (u.title || "").toLowerCase().includes(search) ||
+            (u.artist || "").toLowerCase().includes(search) ||
+            (u.album || "").toLowerCase().includes(search)
+        );
+    });
+
+    // Sort newest first
+    filtered.sort((a, b) => {
+        const aDate = a.skippedAt || "";
+        const bDate = b.skippedAt || "";
+        return bDate.localeCompare(aDate);
+    });
+
+    if (filtered.length === 0) {
+        dom.unratedGrid.innerHTML = "";
+        dom.unratedEmpty.classList.remove("hidden");
+        return;
+    }
+
+    dom.unratedEmpty.classList.add("hidden");
+    dom.unratedGrid.innerHTML = filtered
+        .map(
+            (u) => `
+        <div class="rated-card" data-id="${u.id}" onclick="openRateUnratedModal('${u.id}')">
+            <img class="rated-card-art" src="${u.albumArt || ""}" alt="${esc(u.title)}" onerror="this.style.display='none'">
+            <div class="rated-card-info">
+                <div class="rated-card-title">${esc(u.title)}</div>
+                <div class="rated-card-artist">${esc(u.artist)}</div>
+                <div class="rated-card-meta">${esc(u.album)}${u.year ? " · " + u.year : ""}</div>
+            </div>
+            <div class="rated-card-unrated-badge">UNRATED</div>
+        </div>
+    `
+        )
+        .join("");
+}
+
+window.getUnratedById = function (id) {
+    return allUnrated.find((u) => u.id === id);
+};
+
+// ─── Rate-Unrated Modal ────────────────────────────────────────
+function openRateUnratedModal(id) {
+    const entry = getUnratedById(id);
+    if (!entry) return;
+
+    dom.rateUnratedId.value = entry.id;
+    dom.rateUnratedArt.src = entry.albumArt || "";
+    dom.rateUnratedTitle.textContent = entry.title || "Unknown";
+    dom.rateUnratedArtist.textContent = entry.artist || "Unknown Artist";
+    dom.rateUnratedMeta.textContent = (entry.album || "") + (entry.year ? " · " + entry.year : "");
+
+    const mid = Math.round((appSettings.ratingMin + appSettings.ratingMax) / 2);
+    dom.rateUnratedRating.value = mid;
+    dom.rateUnratedRatingDisplay.textContent = mid;
+    dom.rateUnratedNotes.value = "";
+    dom.rateUnratedTags.value = "";
+
+    dom.rateUnratedModal.classList.remove("hidden");
+}
+window.openRateUnratedModal = openRateUnratedModal;
+
+function closeRateUnratedModal() {
+    dom.rateUnratedModal.classList.add("hidden");
+}
+
+async function saveRateUnrated() {
+    const id = dom.rateUnratedId.value;
+    if (!id) return;
+
+    const entry = getUnratedById(id);
+    if (!entry) return;
+
+    const rating = parseInt(dom.rateUnratedRating.value);
+    const notes = dom.rateUnratedNotes.value.trim();
+    const tags = dom.rateUnratedTags.value.split(",").map((t) => t.trim()).filter(Boolean);
+
+    const payload = {
+        rating,
+        notes,
+        tags,
+        title: entry.title,
+        artist: entry.artist,
+        album: entry.album,
+        year: entry.year,
+    };
+
+    const result = await api(`/api/unrated/${id}/rate`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+    });
+
+    if (result && result.success) {
+        toast("Rating saved!", "success");
+        closeRateUnratedModal();
+        loadUnrated();
+        loadRatings();
+        pollNowPlaying(); // refresh now-playing badge
+    } else {
+        toast(result?.error || "Failed to save rating", "error");
+    }
+}
+
+async function dismissUnrated() {
+    const id = dom.rateUnratedId.value;
+    if (!id) return;
+    if (!confirm("Dismiss this song? It won't appear in unrated anymore.")) return;
+
+    const result = await api(`/api/unrated/${id}`, { method: "DELETE" });
+
+    if (result && result.success) {
+        toast("Song dismissed", "info");
+        closeRateUnratedModal();
+        loadUnrated();
+    } else {
+        toast(result?.error || "Failed to dismiss", "error");
+    }
+}
+
+// ─── Edit Modal (for rated songs) ──────────────────────────────
 function openEditModal(entry) {
     if (!entry) return;
     dom.editId.value = entry.id;
