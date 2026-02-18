@@ -9,6 +9,11 @@ Write-Host "  SongRate - Starting server + tunnel" -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host ""
 
+# 0. Kill stale processes
+Stop-Process -Name cloudflared -Force -ErrorAction SilentlyContinue
+Get-NetTCPConnection -LocalPort 5000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+Write-Host "  Cleaned up stale processes." -ForegroundColor DarkGray
+
 # 1. Start Flask server in background
 Write-Host "[1/3] Starting Flask server..." -ForegroundColor Yellow
 $server = Start-Process -FilePath "py" -ArgumentList "server.py" -WorkingDirectory $DIR -PassThru -WindowStyle Minimized
@@ -25,7 +30,7 @@ Write-Host "  OK - Server running on port 5000" -ForegroundColor Green
 Write-Host "[2/3] Starting Cloudflare Tunnel..." -ForegroundColor Yellow
 
 $logFile = Join-Path $DIR "tunnel.log"
-if (Test-Path $logFile) { Remove-Item $logFile -Force }
+if (Test-Path $logFile) { try { Clear-Content $logFile -Force -ErrorAction Stop } catch { <# file locked, ignore #> } }
 
 $tunnel = Start-Process -FilePath $CF -ArgumentList "tunnel", "--url", "http://localhost:5000" -RedirectStandardError $logFile -PassThru -WindowStyle Hidden
 

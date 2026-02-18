@@ -53,27 +53,68 @@ def init_ytmusic():
         return False
 
 
-# ─── Ratings Persistence ────────────────────────────────────────────────────
+# ─── Ratings Persistence (in-memory cache + crash-safe writes) ──────────────
+import atexit
+import threading
+
 def _ensure_data_dir():
     DATA_DIR.mkdir(exist_ok=True)
     if not RATINGS_FILE.exists():
         with open(RATINGS_FILE, "w") as f:
             json.dump([], f)
 
+# In-memory cache — loaded once, mutated in-place, flushed to disk atomically
+_ratings_cache = None
+_ratings_dirty = False
+_ratings_lock = threading.Lock()
 
 def _load_ratings():
-    _ensure_data_dir()
-    try:
-        with open(RATINGS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
-        return []
+    """Return the in-memory ratings list. Loads from disk on first call."""
+    global _ratings_cache
+    if _ratings_cache is None:
+        _ensure_data_dir()
+        try:
+            with open(RATINGS_FILE, "r", encoding="utf-8") as f:
+                _ratings_cache = json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            _ratings_cache = []
+    return _ratings_cache
 
+def _save_ratings(ratings=None):
+    """Mark cache dirty and flush to disk atomically (write-tmp + rename)."""
+    global _ratings_cache, _ratings_dirty
+    if ratings is not None:
+        _ratings_cache = ratings
+    _ratings_dirty = True
+    _flush_ratings()
 
-def _save_ratings(ratings):
-    _ensure_data_dir()
-    with open(RATINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(ratings, f, indent=2, ensure_ascii=False)
+def _flush_ratings():
+    """Atomic write: write to .tmp file, then os.replace to avoid corruption."""
+    global _ratings_dirty
+    with _ratings_lock:
+        if _ratings_cache is None or not _ratings_dirty:
+            return
+        _ensure_data_dir()
+        tmp_file = str(RATINGS_FILE) + ".tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(_ratings_cache, f, indent=2, ensure_ascii=False)
+        os.replace(tmp_file, RATINGS_FILE)
+        _ratings_dirty = False
+
+# Auto-save every 60 seconds in background
+def _auto_save_loop():
+    while True:
+        time.sleep(60)
+        try:
+            _flush_ratings()
+        except Exception as e:
+            print(f"[auto-save] Error: {e}")
+
+_auto_save_thread = threading.Thread(target=_auto_save_loop, daemon=True)
+_auto_save_thread.start()
+
+# Flush on shutdown (Ctrl+C, crash, etc.)
+atexit.register(_flush_ratings)
 
 
 # ─── Unrated Songs Persistence ──────────────────────────────────────────────
@@ -430,7 +471,78 @@ def now_playing():
         return jsonify({"track": None})
 
     track_info = _extract_track_info(history[0])
+
+    # Check Songs25.csv for matching artist+title
+    _check_and_remove_from_csv(track_info.get("artist", ""), track_info.get("title", ""))
+
     return jsonify({"track": track_info})
+
+
+# Track last checked song to avoid spamming "no match" on every poll
+_last_csv_check = {"artist": "", "title": ""}
+
+
+def _fuzzy_match(a, b):
+    """Return similarity ratio between two strings (0.0 to 1.0)."""
+    from difflib import SequenceMatcher
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def _check_and_remove_from_csv(artist, title):
+    """Check if artist+title exists in Songs25.csv using fuzzy matching. If found, print in green and delete the row."""
+    global _last_csv_check
+    csv_path = os.path.join(os.path.dirname(__file__), "Songs25.csv")
+    if not os.path.exists(csv_path):
+        return
+
+    artist_lower = artist.lower().strip()
+    title_lower = title.lower().strip()
+    if not artist_lower or not title_lower:
+        return
+
+    # Don't re-check the same song on every poll
+    if _last_csv_check["artist"] == artist_lower and _last_csv_check["title"] == title_lower:
+        return
+    _last_csv_check = {"artist": artist_lower, "title": title_lower}
+
+    MATCH_THRESHOLD = 0.85
+
+    try:
+        with open(csv_path, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+        import re
+        def _strip_parens(s):
+            return re.sub(r"\s*\([^)]*\)", "", s).strip()
+
+        now_str = _strip_parens(f"{artist_lower} - {title_lower}")
+        found_idx = None
+        best_score = 0
+        for i, row in enumerate(rows[1:], start=1):
+            csv_artist = row[0].strip().lower() if len(row) > 0 else ""
+            csv_song = row[2].strip().lower() if len(row) > 2 else ""
+            csv_str = _strip_parens(f"{csv_artist} - {csv_song}")
+
+            score = _fuzzy_match(csv_str, now_str)
+            if score >= MATCH_THRESHOLD and score > best_score:
+                best_score = score
+                found_idx = i
+
+        if found_idx is not None:
+            matched_row = rows[found_idx]
+            row_str = ", ".join(matched_row)
+            print(f"\033[92m[Songs25 MATCH] {row_str}\033[0m")
+
+            # Delete the row
+            rows.pop(found_idx)
+            with open(csv_path, "w", encoding="utf-8", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerows(rows)
+            print(f"\033[93m[Songs25] Row deleted. {len(rows) - 1} songs remaining.\033[0m")
+        else:
+            print(f"\033[90m[Songs25] No match for: {artist} - {title}\033[0m")
+    except Exception as e:
+        print(f"\033[91m[Songs25 ERROR] {e}\033[0m")
 
 
 @app.route("/api/search")
@@ -444,7 +556,7 @@ def api_search():
         return jsonify({"results": []})
 
     try:
-        results = ytmusic.search(query, filter="songs", limit=10)
+        results = ytmusic.search(query, filter="songs", limit=20)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -457,6 +569,84 @@ def api_search():
     return jsonify({"results": tracks})
 
 
+@app.route("/api/find-versions")
+def api_find_versions():
+    """Find other versions of a song by scanning the artist's albums."""
+    if ytmusic is None:
+        return jsonify({"error": "YTMusic not authenticated."}), 503
+
+    title = request.args.get("title", "").strip()
+    artist = request.args.get("artist", "").strip()
+    current_video_id = request.args.get("videoId", "").strip()
+    if not title or not artist:
+        return jsonify({"versions": []})
+
+    title_lower = title.lower().strip()
+
+    try:
+        # Search for the artist's albums
+        album_results = ytmusic.search(artist, filter="albums", limit=15)
+        versions = []
+        seen_video_ids = {current_video_id} if current_video_id else set()
+
+        for album_item in album_results:
+            browse_id = album_item.get("browseId")
+            if not browse_id:
+                continue
+
+            # Only check albums by the matching artist
+            album_artists = album_item.get("artists", [])
+            artist_names = [a.get("name", "").lower() for a in album_artists] if album_artists else []
+            if not any(artist.lower() in name for name in artist_names):
+                continue
+
+            try:
+                album_data = ytmusic.get_album(browse_id)
+            except Exception:
+                continue
+
+            album_title = album_data.get("title", "")
+            album_year = album_data.get("year", "")
+            album_art = ""
+            thumbs = album_data.get("thumbnails", [])
+            if thumbs:
+                album_art = thumbs[-1].get("url", "")
+
+            # Scan tracks for matching title
+            for track in album_data.get("tracks", []):
+                track_title = (track.get("title") or "").lower().strip()
+                video_id = track.get("videoId", "")
+                if track_title == title_lower and video_id and video_id not in seen_video_ids:
+                    seen_video_ids.add(video_id)
+
+                    # Check rated status
+                    ratings = _load_ratings()
+                    already_rated = False
+                    existing_rating = None
+                    for r in ratings:
+                        if r.get("videoId") == video_id:
+                            already_rated = True
+                            existing_rating = r
+                            break
+
+                    versions.append({
+                        "videoId": video_id,
+                        "title": track.get("title", title),
+                        "artist": artist,
+                        "album": album_title,
+                        "albumId": browse_id,
+                        "albumArt": album_art,
+                        "year": album_year,
+                        "isAlbum": album_title.lower() != title_lower,
+                        "alreadyRated": already_rated,
+                        "existingRating": existing_rating,
+                    })
+
+        return jsonify({"versions": versions})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/enrich/<album_id>")
 def enrich_album(album_id):
     """Fetch original album release year. Called lazily by frontend."""
@@ -466,34 +656,53 @@ def enrich_album(album_id):
 
 @app.route("/api/ratings", methods=["GET"])
 def get_ratings():
-    """Return all ratings. Supports query params for filtering."""
-    ratings = _load_ratings()
+    """Return ratings with pagination. Supports filtering, sorting, search."""
+    all_ratings = _load_ratings()
 
     # Optional filtering
     artist = request.args.get("artist", "").lower()
     min_rating = request.args.get("min_rating", type=int)
     max_rating = request.args.get("max_rating", type=int)
-    sort_by = request.args.get("sort_by", "ratedAt")  # ratedAt, rating, artist, title, year
-    sort_order = request.args.get("sort_order", "desc")  # asc, desc
+    search = request.args.get("search", "").lower()
+    sort_by = request.args.get("sort_by", "ratedAt")
+    sort_order = request.args.get("sort_order", "desc")
+    limit = request.args.get("limit", 50, type=int)
+    offset = request.args.get("offset", 0, type=int)
+
+    # Work on a copy so we don't mutate the cache
+    filtered = list(all_ratings)
 
     if artist:
-        ratings = [r for r in ratings if artist in r.get("artist", "").lower()]
+        filtered = [r for r in filtered if artist in r.get("artist", "").lower()]
     if min_rating is not None:
-        ratings = [r for r in ratings if r.get("rating", 0) >= min_rating]
+        filtered = [r for r in filtered if r.get("rating", 0) >= min_rating]
     if max_rating is not None:
-        ratings = [r for r in ratings if r.get("rating", 0) <= max_rating]
+        filtered = [r for r in filtered if r.get("rating", 0) <= max_rating]
+    if search:
+        filtered = [r for r in filtered if (
+            search in r.get("title", "").lower() or
+            search in r.get("artist", "").lower() or
+            search in r.get("album", "").lower() or
+            search in r.get("notes", "").lower() or
+            any(search in t.lower() for t in r.get("tags", []))
+        )]
 
-    # Sort
+    # Sort the copy
     reverse = sort_order == "desc"
     if sort_by in ("rating", "year"):
-        ratings.sort(key=lambda r: r.get(sort_by, 0) or 0, reverse=reverse)
+        filtered.sort(key=lambda r: r.get(sort_by, 0) or 0, reverse=reverse)
     else:
-        ratings.sort(key=lambda r: r.get(sort_by, "").lower() if isinstance(r.get(sort_by), str) else str(r.get(sort_by, "")), reverse=reverse)
+        filtered.sort(key=lambda r: r.get(sort_by, "").lower() if isinstance(r.get(sort_by), str) else str(r.get(sort_by, "")), reverse=reverse)
+
+    total = len(filtered)
+    page = filtered[offset:offset + limit]
 
     return jsonify({
-        "ratings": ratings,
-        "total": len(ratings),
-        "stats": _compute_stats(_load_ratings()),  # stats always on full dataset
+        "ratings": page,
+        "total": total,
+        "offset": offset,
+        "hasMore": offset + limit < total,
+        "stats": _compute_stats(all_ratings),  # stats always on full dataset
     })
 
 
@@ -642,6 +851,13 @@ def delete_unrated(entry_id):
         return jsonify({"error": "Entry not found"}), 404
 
     _save_unrated(unrated)
+    return jsonify({"success": True})
+
+
+@app.route("/api/unrated/all", methods=["DELETE"])
+def delete_all_unrated():
+    """Dismiss all unrated songs."""
+    _save_unrated([])
     return jsonify({"success": True})
 
 

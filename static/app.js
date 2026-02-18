@@ -6,12 +6,12 @@
 
 // ─── State ─────────────────────────────────────────────────────
 let currentTrack = null;
-let recentSongIds = [];          // last 3 confirmed song IDs (anti-flicker)
-const MAX_RECENT = 3;
+let recentSongIds = [];          // confirmed song IDs (anti-flicker)
 let allRatings = [];
 let allUnrated = [];
 let pollInterval = null;
-let appSettings = { ratingMin: 1, ratingMax: 10 };
+let pollPauseTimeout = null;
+let appSettings = { ratingMin: 1, ratingMax: 10, pollPauseMs: 10000, maxRecent: 5 };
 const POLL_MS = 5000;
 
 // ─── DOM Refs ──────────────────────────────────────────────────
@@ -21,6 +21,7 @@ const dom = {
     connectionStatus: $("connectionStatus"),
     statusText: document.querySelector(".status-text"),
     nowPlayingEmpty: $("nowPlayingEmpty"),
+    npLayout: $("npLayout"),
     nowPlayingCard: $("nowPlayingCard"),
     npAlbumArt: $("npAlbumArt"),
     npTitle: $("npTitle"),
@@ -90,6 +91,9 @@ const dom = {
     btnExportCSV: $("btnExportCSV"),
     btnExportJSON: $("btnExportJSON"),
     toastContainer: $("toastContainer"),
+    // Pagination
+    ratedCount: $("ratedCount"),
+    btnLoadMore: $("btnLoadMore"),
     // Search modal
     btnSearchSong: $("btnSearchSong"),
     searchModal: $("searchModal"),
@@ -99,6 +103,13 @@ const dom = {
     searchLoading: $("searchLoading"),
     searchResults: $("searchResults"),
     searchEmpty: $("searchEmpty"),
+    // Alt versions
+    altVersionsPanel: $("altVersionsPanel"),
+    altVersionsList: $("altVersionsList"),
+    altVersionsLoading: $("altVersionsLoading"),
+    // Other Versions (album lookup)
+    otherVersionsPanel: $("otherVersionsPanel"),
+    otherVersionsList: $("otherVersionsList"),
 };
 
 // ─── Initialization ────────────────────────────────────────────
@@ -148,10 +159,25 @@ function bindEvents() {
         if (e.target === dom.settingsModal) closeSettings();
     });
     dom.settingsSave.addEventListener("click", saveSettings);
-    // Search & sort
-    dom.searchInput.addEventListener("input", renderRatedSongs);
-    dom.sortSelect.addEventListener("change", renderRatedSongs);
+    // Search & sort (server-side, debounced)
+    let searchDebounce = null;
+    dom.searchInput.addEventListener("input", () => {
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => loadRatings(), 300);
+    });
+    dom.sortSelect.addEventListener("change", () => loadRatings());
+    dom.btnLoadMore.addEventListener("click", loadMoreRatings);
     dom.unratedSearchInput.addEventListener("input", renderUnratedSongs);
+    document.getElementById("btnDismissAllUnrated")?.addEventListener("click", async () => {
+        if (!confirm("Dismiss all unrated songs? This cannot be undone.")) return;
+        const res = await api("/api/unrated/all", { method: "DELETE" });
+        if (res && res.success) {
+            toast("All unrated songs dismissed", "success");
+            loadUnrated();
+        } else {
+            toast("Failed to dismiss", "error");
+        }
+    });
     // Export
     dom.btnExportCSV.addEventListener("click", () => {
         window.location.href = "/api/export/csv";
@@ -198,7 +224,12 @@ async function api(url, options = {}) {
 async function loadSettings() {
     const data = await api("/api/settings");
     if (data) {
-        appSettings = data;
+        // Enforce defaults and types
+        appSettings.ratingMin = parseInt(data.ratingMin) || -3;
+        appSettings.ratingMax = parseInt(data.ratingMax) || 3;
+        appSettings.shrinkage = parseFloat(data.shrinkage) || 0;
+        appSettings.pollPauseMs = parseInt(data.pollPauseMs) || 10000;
+        appSettings.maxRecent = parseInt(data.maxRecent) || 5;
         applySettingsToUI();
     }
 }
@@ -224,6 +255,12 @@ function applySettingsToUI() {
 
     dom.settingsMin.value = min;
     dom.settingsMax.value = max;
+
+    const pollPauseEl = document.getElementById("settingsPollPause");
+    if (pollPauseEl) pollPauseEl.value = Math.round(appSettings.pollPauseMs / 1000);
+
+    const maxRecentEl = document.getElementById("settingsMaxRecent");
+    if (maxRecentEl) maxRecentEl.value = appSettings.maxRecent;
 }
 
 function openSettings() {
@@ -239,6 +276,8 @@ function closeSettings() {
 async function saveSettings() {
     const min = parseInt(dom.settingsMin.value);
     const max = parseInt(dom.settingsMax.value);
+    const pollPauseSec = parseInt(document.getElementById("settingsPollPause").value) || 10;
+    const maxRecent = parseInt(document.getElementById("settingsMaxRecent").value) || 5;
 
     if (isNaN(min) || isNaN(max)) {
         toast("Please enter valid numbers", "error");
@@ -251,11 +290,14 @@ async function saveSettings() {
 
     const result = await api("/api/settings", {
         method: "POST",
-        body: JSON.stringify({ ratingMin: min, ratingMax: max }),
+        body: JSON.stringify({ ratingMin: min, ratingMax: max, pollPauseMs: pollPauseSec * 1000, maxRecent: maxRecent }),
     });
 
     if (result && result.success) {
-        appSettings = result.settings;
+        appSettings.ratingMin = parseInt(result.settings.ratingMin) || min;
+        appSettings.ratingMax = parseInt(result.settings.ratingMax) || max;
+        appSettings.pollPauseMs = parseInt(result.settings.pollPauseMs) || pollPauseSec * 1000;
+        appSettings.maxRecent = parseInt(result.settings.maxRecent) || maxRecent;
         applySettingsToUI();
         closeSettings();
         toast("Settings saved", "success");
@@ -288,10 +330,37 @@ async function checkStatus() {
 //   If the old song wasn't rated, save it as unrated.
 //
 function startPolling() {
+    const toggle = document.getElementById("pausePollToggle");
+    if (toggle && toggle.checked) return; // manual pause active
     pollNowPlaying();
     pollInterval = setInterval(pollNowPlaying, POLL_MS);
 }
 
+function pausePolling() {
+    // Always stop current polling and cancel any pending resume
+    clearInterval(pollInterval);
+    pollInterval = null;
+    clearTimeout(pollPauseTimeout);
+    const toggle = document.getElementById("pausePollToggle");
+    if (toggle && toggle.checked) return; // manual pause — don't auto-resume
+    // Restart after configured delay
+    pollPauseTimeout = setTimeout(() => {
+        pollPauseTimeout = null;
+        startPolling();
+    }, appSettings.pollPauseMs);
+}
+
+// Manual pause toggle
+document.getElementById("pausePollToggle")?.addEventListener("change", (e) => {
+    if (e.target.checked) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+        clearTimeout(pollPauseTimeout);
+        pollPauseTimeout = null;
+    } else {
+        startPolling();
+    }
+});
 async function pollNowPlaying() {
     const data = await api("/api/now-playing");
     if (!data || !data.track) {
@@ -322,22 +391,27 @@ async function pollNowPlaying() {
         return;
     }
 
-    // Genuinely new song — accept it
-    acceptTrack(incoming, true);
+    // Genuinely new song — accept it (from poll)
+    acceptTrack(incoming, true, true);
 }
 
-function acceptTrack(track, animate) {
+function acceptTrack(track, animate, fromPoll = false) {
     // Save old track as unrated if it wasn't rated and isn't already unrated
     if (currentTrack && !currentTrack.alreadyRated && !currentTrack.alreadyUnrated) {
         saveAsUnrated(currentTrack);
     }
 
-    // Push old track into recent list before switching
-    if (currentTrack) {
-        recentSongIds.push(currentTrack.videoId);
-        if (recentSongIds.length > MAX_RECENT) {
-            recentSongIds.shift();
+    if (fromPoll) {
+        // Poll-originated switch: push old track into recent list (anti-flicker)
+        if (currentTrack) {
+            recentSongIds.push(currentTrack.videoId);
+            if (recentSongIds.length > appSettings.maxRecent) {
+                recentSongIds.shift();
+            }
         }
+    } else {
+        // Manual selection: clear recent list so polling resumes cleanly
+        recentSongIds.length = 0;
     }
 
     currentTrack = track;
@@ -345,6 +419,10 @@ function acceptTrack(track, animate) {
 
     // Lazy-load release year
     enrichYearIfNeeded(currentTrack);
+
+    // Auto-search for alternative versions
+    loadAltVersions(currentTrack);
+    loadOtherVersions(currentTrack);
 }
 
 async function saveAsUnrated(track) {
@@ -381,13 +459,13 @@ async function enrichYearIfNeeded(track) {
 // ─── Now Playing UI ────────────────────────────────────────────
 function showEmptyState() {
     dom.nowPlayingEmpty.classList.remove("hidden");
-    dom.nowPlayingCard.classList.add("hidden");
+    dom.npLayout.classList.add("hidden");
     currentTrack = null;
 }
 
 function showTrackCard(track, animate) {
     dom.nowPlayingEmpty.classList.add("hidden");
-    dom.nowPlayingCard.classList.remove("hidden");
+    dom.npLayout.classList.remove("hidden");
 
     if (animate) {
         dom.nowPlayingCard.style.animation = "none";
@@ -470,14 +548,42 @@ async function submitRating() {
     }
 }
 
-// ─── Load & Render Ratings ─────────────────────────────────────
-async function loadRatings() {
-    const data = await api("/api/ratings");
+// ─── Load & Render Ratings (paginated) ──────────────────────────
+const PAGE_SIZE = 50;
+let currentOffset = 0;
+let hasMoreRatings = false;
+let totalFiltered = 0;
+
+async function loadRatings(append = false) {
+    if (!append) {
+        currentOffset = 0;
+        allRatings = [];
+    }
+
+    const [sortBy, sortOrder] = dom.sortSelect.value.split("-");
+    const search = dom.searchInput.value.trim();
+    const params = new URLSearchParams({
+        sort_by: sortBy,
+        sort_order: sortOrder,
+        limit: PAGE_SIZE,
+        offset: currentOffset,
+    });
+    if (search) params.set("search", search);
+
+    const data = await api(`/api/ratings?${params}`);
     if (!data) return;
 
-    allRatings = data.ratings || [];
+    allRatings = allRatings.concat(data.ratings || []);
+    hasMoreRatings = data.hasMore || false;
+    totalFiltered = data.total || 0;
+    currentOffset = allRatings.length;
+
     updateStats(data.stats);
     renderRatedSongs();
+}
+
+async function loadMoreRatings() {
+    await loadRatings(true);
 }
 
 function updateStats(stats) {
@@ -494,45 +600,16 @@ function updateStats(stats) {
 }
 
 function renderRatedSongs() {
-    const search = dom.searchInput.value.toLowerCase();
-    const [sortBy, sortOrder] = dom.sortSelect.value.split("-");
-
-    let filtered = allRatings.filter((r) => {
-        if (!search) return true;
-        return (
-            (r.title || "").toLowerCase().includes(search) ||
-            (r.artist || "").toLowerCase().includes(search) ||
-            (r.album || "").toLowerCase().includes(search) ||
-            (r.notes || "").toLowerCase().includes(search) ||
-            (r.tags || []).some((t) => t.toLowerCase().includes(search))
-        );
-    });
-
-    filtered.sort((a, b) => {
-        let aVal = a[sortBy] ?? "";
-        let bVal = b[sortBy] ?? "";
-
-        if (sortBy === "rating" || sortBy === "year") {
-            aVal = Number(aVal) || 0;
-            bVal = Number(bVal) || 0;
-        } else if (typeof aVal === "string") {
-            aVal = aVal.toLowerCase();
-            bVal = (bVal || "").toLowerCase();
-        }
-
-        if (aVal < bVal) return sortOrder === "asc" ? -1 : 1;
-        if (aVal > bVal) return sortOrder === "asc" ? 1 : -1;
-        return 0;
-    });
-
-    if (filtered.length === 0) {
+    if (allRatings.length === 0) {
         dom.ratedGrid.innerHTML = "";
         dom.ratedEmpty.classList.remove("hidden");
+        dom.ratedCount.textContent = "";
+        dom.btnLoadMore.style.display = "none";
         return;
     }
 
     dom.ratedEmpty.classList.add("hidden");
-    dom.ratedGrid.innerHTML = filtered
+    dom.ratedGrid.innerHTML = allRatings
         .map(
             (r) => `
         <div class="rated-card" data-id="${r.id}" onclick="openEditModal(getRatingById('${r.id}'))">
@@ -547,6 +624,10 @@ function renderRatedSongs() {
     `
         )
         .join("");
+
+    // Update count & Load More button
+    dom.ratedCount.textContent = `Showing ${allRatings.length} of ${totalFiltered}`;
+    dom.btnLoadMore.style.display = hasMoreRatings ? "" : "none";
 }
 
 window.getRatingById = function (id) {
@@ -824,6 +905,7 @@ async function doSongSearch() {
             el.addEventListener("click", () => {
                 const track = results[i];
                 acceptTrack(track, true);
+                pausePolling();
                 closeSearchModal();
                 toast(`Loaded: ${track.title}`, "success");
             });
@@ -841,3 +923,144 @@ function esc(str) {
     return el.innerHTML;
 }
 
+// ─── Alt Versions Sidebar ──────────────────────────────────────
+async function loadAltVersions(track) {
+    if (!track || !track.title) return;
+
+    dom.altVersionsList.innerHTML = '<div class="alt-versions-loading">Searching…</div>';
+
+    try {
+        // Dual search: title+artist (precise) and title-only (catches cross-album versions)
+        const q1 = `${track.title} ${track.artist || ""}`.trim();
+        const q2 = track.title.trim();
+
+        const [res1, res2] = await Promise.all([
+            fetch(`/api/search?q=${encodeURIComponent(q1)}`).then(r => r.json()).catch(() => null),
+            q1 !== q2
+                ? fetch(`/api/search?q=${encodeURIComponent(q2)}`).then(r => r.json()).catch(() => null)
+                : Promise.resolve(null),
+        ]);
+
+        // Merge and deduplicate by videoId
+        const seen = new Set();
+        const merged = [];
+        for (const data of [res1, res2]) {
+            if (!data || !data.results) continue;
+            for (const r of data.results) {
+                if (r.videoId && !seen.has(r.videoId)) {
+                    seen.add(r.videoId);
+                    merged.push(r);
+                }
+            }
+        }
+
+        // Filter out the current track
+        const alts = merged.filter(r => r.videoId !== track.videoId);
+        if (!alts.length) {
+            dom.altVersionsList.innerHTML = '<div class="alt-versions-empty">No other versions found</div>';
+            return;
+        }
+
+        renderAltVersions(alts, track.videoId);
+    } catch (e) {
+        dom.altVersionsList.innerHTML = '<div class="alt-versions-empty">Could not load</div>';
+    }
+}
+
+function renderAltVersions(alts, activeVideoId) {
+    // Count how many results share each albumId — multi-track = album, not single
+    const albumIdCounts = {};
+    alts.forEach(t => {
+        if (t.albumId) albumIdCounts[t.albumId] = (albumIdCounts[t.albumId] || 0) + 1;
+    });
+
+    dom.altVersionsList.innerHTML = alts.map((t, i) => {
+        const isActive = t.videoId === activeVideoId;
+        // Single heuristic: album name matches title AND albumId only appears once in results
+        const nameMatch = t.album && t.title && t.album.toLowerCase().trim() === t.title.toLowerCase().trim();
+        const appearsOnce = !t.albumId || (albumIdCounts[t.albumId] || 0) <= 1;
+        const isSingle = nameMatch && appearsOnce;
+        const badgeClass = isSingle ? "single" : "album";
+        const badgeText = isSingle ? "Single" : "Album";
+        return `
+            <div class="alt-version-item${isActive ? " active" : ""}" data-alt-idx="${i}">
+                <img class="alt-version-art" src="${t.albumArt || ""}" alt="" onerror="this.style.visibility='hidden'">
+                <div class="alt-version-info">
+                    <div class="alt-version-name">${esc(t.title)}</div>
+                    <div class="alt-version-meta">${esc(t.album || t.artist)}</div>
+                </div>
+                <span class="alt-version-badge ${badgeClass}">${badgeText}</span>
+            </div>`;
+    }).join("");
+
+    dom.altVersionsList.querySelectorAll(".alt-version-item").forEach((el, i) => {
+        el.addEventListener("click", () => {
+            const track = alts[i];
+            recentSongIds.length = 0; // Clear anti-flicker so polling resumes cleanly
+            currentTrack = track;
+            showTrackCard(track, true);
+            enrichYearIfNeeded(track);
+            pausePolling();
+            loadAltVersions(track);
+            loadOtherVersions(track);
+            toast(`Switched to: ${track.album || track.title}`, "success");
+        });
+    });
+}
+
+// ─── Other Versions (album lookup) ─────────────────────────────
+async function loadOtherVersions(track) {
+    if (!track || !track.title || !track.artist) {
+        dom.otherVersionsList.innerHTML = '<div class="alt-versions-empty">—</div>';
+        return;
+    }
+
+    dom.otherVersionsList.innerHTML = '<div class="alt-versions-loading">Scanning albums…</div>';
+
+    try {
+        const params = new URLSearchParams({
+            title: track.title,
+            artist: track.artist,
+            videoId: track.videoId || "",
+        });
+        const res = await fetch(`/api/find-versions?${params}`);
+        const data = await res.json();
+
+        if (!res.ok || !data.versions || !data.versions.length) {
+            dom.otherVersionsList.innerHTML = '<div class="alt-versions-empty">No other versions found</div>';
+            return;
+        }
+
+        const versions = data.versions;
+        dom.otherVersionsList.innerHTML = versions.map((v, i) => {
+            const badge = v.isAlbum ? "album" : "single";
+            const badgeText = v.isAlbum ? "Album" : "Single";
+            const ratedIndicator = v.alreadyRated ? ' <span style="color:var(--accent);font-size:11px">★ Rated</span>' : "";
+            return `
+                <div class="alt-version-item" data-ov-idx="${i}">
+                    <img class="alt-version-art" src="${v.albumArt || ""}" alt="" onerror="this.style.visibility='hidden'">
+                    <div class="alt-version-info">
+                        <div class="alt-version-name">${esc(v.album)}${ratedIndicator}</div>
+                        <div class="alt-version-meta">${v.year || ""}</div>
+                    </div>
+                    <span class="alt-version-badge ${badge}">${badgeText}</span>
+                </div>`;
+        }).join("");
+
+        dom.otherVersionsList.querySelectorAll(".alt-version-item").forEach((el, i) => {
+            el.addEventListener("click", () => {
+                const v = versions[i];
+                recentSongIds.length = 0; // Clear anti-flicker so polling resumes cleanly
+                currentTrack = v;
+                showTrackCard(v, true);
+                enrichYearIfNeeded(v);
+                pausePolling();
+                loadAltVersions(v);
+                loadOtherVersions(v);
+                toast(`Switched to: ${v.album} version`, "success");
+            });
+        });
+    } catch (e) {
+        dom.otherVersionsList.innerHTML = '<div class="alt-versions-empty">Could not load</div>';
+    }
+}

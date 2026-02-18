@@ -85,6 +85,10 @@
                     </svg>
                     Search & Rate
                 </button>
+                <label
+                    style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);cursor:pointer;margin-left:8px">
+                    <input type="checkbox" id="pausePollToggle"> Pause Polling
+                </label>
             </div>
 
             <!-- Empty state -->
@@ -94,47 +98,68 @@
                 <p class="empty-sub">The app checks every few seconds for new tracks</p>
             </div>
 
-            <!-- Track card -->
-            <div class="now-playing-card hidden" id="nowPlayingCard">
-                <div class="np-album-art-wrap">
-                    <img class="np-album-art" id="npAlbumArt" src="" alt="Album artwork">
-                    <div class="np-playing-indicator">
-                        <span></span><span></span><span></span><span></span>
-                    </div>
-                </div>
-                <div class="np-info">
-                    <h3 class="np-title" id="npTitle"></h3>
-                    <p class="np-artist" id="npArtist"></p>
-                    <div class="np-meta">
-                        <span class="np-album" id="npAlbum"></span>
-                        <span class="np-year" id="npYear"></span>
-                    </div>
-
-                    <!-- Already rated badge -->
-                    <div class="np-already-rated hidden" id="npAlreadyRated">
-                        <span class="rated-badge">★ Already Rated</span>
-                        <span class="rated-value" id="npExistingRating"></span>
-                        <button class="btn-sm btn-edit-existing" id="npEditExisting">Edit</button>
-                    </div>
-
-                    <!-- Rating input -->
-                    <div class="np-rating-form" id="npRatingForm">
-                        <label class="rating-label">Rate this song</label>
-                        <div class="rating-input-group">
-                            <input type="range" id="npRatingSlider" min="1" max="10" step="1" value="5"
-                                class="rating-slider">
-                            <span class="rating-display" id="npRatingDisplay">5</span>
-                            <span class="rating-range-label" id="npRangeLabel">(1–10)</span>
+            <!-- Track card + alternatives wrapper -->
+            <div class="np-layout hidden" id="npLayout">
+                <div class="now-playing-card" id="nowPlayingCard">
+                    <div class="np-album-art-wrap">
+                        <img class="np-album-art" id="npAlbumArt" src="" alt="Album artwork">
+                        <div class="np-playing-indicator">
+                            <span></span><span></span><span></span><span></span>
                         </div>
                     </div>
-                    <div class="rating-extras">
-                        <input type="text" id="npNotes" placeholder="Add a note (optional)" class="input-notes">
-                        <input type="text" id="npTags" placeholder="Tags: e.g. chill, workout (optional)"
-                            class="input-tags">
+                    <div class="np-info">
+                        <h3 class="np-title" id="npTitle"></h3>
+                        <p class="np-artist" id="npArtist"></p>
+                        <div class="np-meta">
+                            <span class="np-album" id="npAlbum"></span>
+                            <span class="np-year" id="npYear"></span>
+                        </div>
+
+                        <!-- Already rated badge -->
+                        <div class="np-already-rated hidden" id="npAlreadyRated">
+                            <span class="rated-badge">★ Already Rated</span>
+                            <span class="rated-value" id="npExistingRating"></span>
+                            <button class="btn-sm btn-edit-existing" id="npEditExisting">Edit</button>
+                        </div>
+
+                        <!-- Rating input -->
+                        <div class="np-rating-form" id="npRatingForm">
+                            <label class="rating-label">Rate this song</label>
+                            <div class="rating-input-group">
+                                <input type="range" id="npRatingSlider" min="1" max="10" step="1" value="5"
+                                    class="rating-slider">
+                                <span class="rating-display" id="npRatingDisplay">5</span>
+                                <span class="rating-range-label" id="npRangeLabel">(1–10)</span>
+                            </div>
+                        </div>
+                        <div class="rating-extras">
+                            <input type="text" id="npNotes" placeholder="Add a note (optional)" class="input-notes">
+                            <input type="text" id="npTags" placeholder="Tags: e.g. chill, workout (optional)"
+                                class="input-tags">
+                        </div>
+                        <button class="btn-primary" id="npSubmitRating">
+                            <span>Save Rating</span>
+                        </button>
                     </div>
-                    <button class="btn-primary" id="npSubmitRating">
-                        <span>Save Rating</span>
-                    </button>
+                </div>
+
+                <!-- Sidebars column (stacked) -->
+                <div class="sidebars-column">
+                    <!-- Related songs sidebar -->
+                    <div class="alt-versions-panel" id="altVersionsPanel">
+                        <h4 class="alt-versions-title">Related</h4>
+                        <div class="alt-versions-list" id="altVersionsList">
+                            <div class="alt-versions-loading" id="altVersionsLoading">Searching…</div>
+                        </div>
+                    </div>
+
+                    <!-- Other Versions sidebar (album lookup) -->
+                    <div class="alt-versions-panel" id="otherVersionsPanel">
+                        <h4 class="alt-versions-title">Other Versions</h4>
+                        <div class="alt-versions-list" id="otherVersionsList">
+                            <div class="alt-versions-loading">Scanning albums…</div>
+                        </div>
+                    </div>
                 </div>
             </div>
             </div>
@@ -166,6 +191,9 @@
                 <h2 class="section-title">Unrated Songs</h2>
                 <div class="rated-controls">
                     <input type="text" id="unratedSearchInput" placeholder="Search unrated…" class="input-search">
+                    <button id="btnDismissAllUnrated"
+                        style="margin-left:8px;font-size:12px;padding:4px 12px;border-radius:6px;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer">Dismiss
+                        All</button>
                 </div>
             </div>
 
@@ -198,6 +226,12 @@
 
             <div class="rated-grid" id="ratedGrid">
                 <!-- Populated by JS -->
+            </div>
+
+            <div class="load-more-wrap" id="loadMoreWrap" style="text-align:center;padding:16px 0">
+                <span class="rated-count" id="ratedCount"
+                    style="font-size:13px;color:var(--text-muted);margin-right:12px"></span>
+                <button class="btn-sm" id="btnLoadMore" style="display:none">Load More</button>
             </div>
 
             <div class="rated-empty hidden" id="ratedEmpty">
@@ -318,6 +352,18 @@
                         </div>
                     </div>
                     <p class="form-hint">Supports any integer range, including negative numbers</p>
+                </div>
+                <div class="settings-group" style="margin-top:16px">
+                    <label class="settings-label">Poll pause on selection (seconds)</label>
+                    <input type="number" id="settingsPollPause" class="input-field input-sm" value="10" min="1"
+                        max="120" style="width:80px">
+                    <p class="form-hint">How long to pause auto-detection after manually picking a song</p>
+                </div>
+                <div class="settings-group" style="margin-top:16px">
+                    <label class="settings-label">Anti-flicker buffer size</label>
+                    <input type="number" id="settingsMaxRecent" class="input-field input-sm" value="5" min="1" max="20"
+                        style="width:80px">
+                    <p class="form-hint">Number of recent songs to remember to prevent reverting (default 5)</p>
                 </div>
             </div>
             <div class="modal-footer">
