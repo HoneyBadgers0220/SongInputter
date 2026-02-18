@@ -27,6 +27,7 @@ BROWSER_AUTH_FILE = BASE_DIR / "browser.json"
 DEFAULT_SETTINGS = {
     "ratingMin": 1,
     "ratingMax": 10,
+    "shrinkageC": 5,
 }
 
 # ─── Flask App ──────────────────────────────────────────────────────────────
@@ -218,6 +219,171 @@ def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
+@app.route("/analytics")
+def analytics_page():
+    return send_from_directory(app.static_folder, "analytics.html")
+
+
+@app.route("/api/analytics")
+def api_analytics():
+    """Comprehensive analytics with Bayesian adjusted scores."""
+    ratings = _load_ratings()
+    settings = _load_settings()
+    shrinkage_c = float(request.args.get("c", settings.get("shrinkageC", 5)))
+
+    if not ratings:
+        return jsonify({"artists": [], "albums": [], "timeline": [],
+                        "distribution": {}, "decades": {}, "tags": [],
+                        "globalMean": 0, "totalSongs": 0, "shrinkageC": shrinkage_c})
+
+    # Global mean
+    all_scores = [r["rating"] for r in ratings if isinstance(r.get("rating"), (int, float))]
+    global_mean = sum(all_scores) / len(all_scores) if all_scores else 0
+
+    # ── Artist rankings ──
+    artist_data = {}
+    for r in ratings:
+        a = r.get("artist", "Unknown")
+        if a not in artist_data:
+            artist_data[a] = {"scores": [], "albums": set()}
+        if isinstance(r.get("rating"), (int, float)):
+            artist_data[a]["scores"].append(r["rating"])
+        artist_data[a]["albums"].add(r.get("album", ""))
+
+    artists = []
+    for name, d in artist_data.items():
+        n = len(d["scores"])
+        if n == 0:
+            continue
+        total = sum(d["scores"])
+        avg = total / n
+        adjusted = (n * avg + shrinkage_c * global_mean) / (n + shrinkage_c)
+        artists.append({
+            "name": name,
+            "appearances": n,
+            "totalScore": round(total, 2),
+            "avgScore": round(avg, 3),
+            "adjustedScore": round(adjusted, 3),
+            "albumCount": len(d["albums"]),
+            "minRating": min(d["scores"]),
+            "maxRating": max(d["scores"]),
+        })
+    artists.sort(key=lambda x: x["adjustedScore"], reverse=True)
+    for i, a in enumerate(artists):
+        a["rank"] = i + 1
+
+    # ── Album rankings ──
+    album_data = {}
+    for r in ratings:
+        album_key = r.get("album", "Unknown") or "Unknown"
+        if album_key not in album_data:
+            album_data[album_key] = {
+                "scores": [], "artist": r.get("artist", ""),
+                "year": r.get("year", ""), "albumArt": r.get("albumArt", "")
+            }
+        if isinstance(r.get("rating"), (int, float)):
+            album_data[album_key]["scores"].append(r["rating"])
+
+    albums = []
+    for name, d in album_data.items():
+        n = len(d["scores"])
+        if n == 0:
+            continue
+        total = sum(d["scores"])
+        avg = total / n
+        adjusted = (n * avg + shrinkage_c * global_mean) / (n + shrinkage_c)
+        albums.append({
+            "name": name,
+            "artist": d["artist"],
+            "year": d["year"],
+            "albumArt": d["albumArt"],
+            "appearances": n,
+            "totalScore": round(total, 2),
+            "avgScore": round(avg, 3),
+            "adjustedScore": round(adjusted, 3),
+            "minRating": min(d["scores"]),
+            "maxRating": max(d["scores"]),
+        })
+    albums.sort(key=lambda x: x["adjustedScore"], reverse=True)
+    for i, a in enumerate(albums):
+        a["rank"] = i + 1
+
+    # ── Timeline (ratings per day) ──
+    timeline = {}
+    for r in ratings:
+        day = r.get("ratedAt", "")[:10]
+        if day:
+            if day not in timeline:
+                timeline[day] = {"count": 0, "totalRating": 0}
+            timeline[day]["count"] += 1
+            if isinstance(r.get("rating"), (int, float)):
+                timeline[day]["totalRating"] += r["rating"]
+    timeline_list = []
+    for day, d in sorted(timeline.items()):
+        timeline_list.append({
+            "date": day,
+            "count": d["count"],
+            "avgRating": round(d["totalRating"] / d["count"], 2) if d["count"] else 0,
+        })
+
+    # ── Rating distribution ──
+    distribution = {}
+    for s in all_scores:
+        key = str(int(round(s)))
+        distribution[key] = distribution.get(key, 0) + 1
+
+    # ── Decade distribution ──
+    decades = {}
+    for r in ratings:
+        year = r.get("year", "")
+        if year and str(year).isdigit():
+            decade = str(int(year) // 10 * 10) + "s"
+            if decade not in decades:
+                decades[decade] = {"count": 0, "totalRating": 0}
+            decades[decade]["count"] += 1
+            if isinstance(r.get("rating"), (int, float)):
+                decades[decade]["totalRating"] += r["rating"]
+    decades_list = {}
+    for dec, d in sorted(decades.items()):
+        decades_list[dec] = {
+            "count": d["count"],
+            "avgRating": round(d["totalRating"] / d["count"], 2) if d["count"] else 0,
+        }
+
+    # ── Tag analysis ──
+    tag_data = {}
+    for r in ratings:
+        for tag in (r.get("tags") or []):
+            t = tag.strip().lower()
+            if not t:
+                continue
+            if t not in tag_data:
+                tag_data[t] = {"count": 0, "totalRating": 0}
+            tag_data[t]["count"] += 1
+            if isinstance(r.get("rating"), (int, float)):
+                tag_data[t]["totalRating"] += r["rating"]
+    tags = []
+    for name, d in tag_data.items():
+        tags.append({
+            "tag": name,
+            "count": d["count"],
+            "avgRating": round(d["totalRating"] / d["count"], 2) if d["count"] else 0,
+        })
+    tags.sort(key=lambda x: x["count"], reverse=True)
+
+    return jsonify({
+        "artists": artists,
+        "albums": albums,
+        "timeline": timeline_list,
+        "distribution": distribution,
+        "decades": decades_list,
+        "tags": tags,
+        "globalMean": round(global_mean, 3),
+        "totalSongs": len(ratings),
+        "shrinkageC": shrinkage_c,
+    })
+
+
 @app.route("/api/status")
 def api_status():
     """Check if YTMusic is authenticated."""
@@ -243,6 +409,8 @@ def update_settings():
         settings["ratingMin"] = int(data["ratingMin"])
     if "ratingMax" in data:
         settings["ratingMax"] = int(data["ratingMax"])
+    if "shrinkageC" in data:
+        settings["shrinkageC"] = max(0, float(data["shrinkageC"]))
 
     if settings["ratingMin"] >= settings["ratingMax"]:
         return jsonify({"error": "Min must be less than max"}), 400
@@ -263,6 +431,30 @@ def now_playing():
 
     track_info = _extract_track_info(history[0])
     return jsonify({"track": track_info})
+
+
+@app.route("/api/search")
+def api_search():
+    """Search YouTube Music for songs. Returns results in track-info format."""
+    if ytmusic is None:
+        return jsonify({"error": "YTMusic not authenticated."}), 503
+
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"results": []})
+
+    try:
+        results = ytmusic.search(query, filter="songs", limit=10)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    tracks = []
+    for item in results:
+        if item.get("resultType") != "song":
+            continue
+        tracks.append(_extract_track_info(item))
+
+    return jsonify({"results": tracks})
 
 
 @app.route("/api/enrich/<album_id>")

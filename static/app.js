@@ -90,6 +90,15 @@ const dom = {
     btnExportCSV: $("btnExportCSV"),
     btnExportJSON: $("btnExportJSON"),
     toastContainer: $("toastContainer"),
+    // Search modal
+    btnSearchSong: $("btnSearchSong"),
+    searchModal: $("searchModal"),
+    searchModalClose: $("searchModalClose"),
+    searchSongInput: $("searchSongInput"),
+    searchSongBtn: $("searchSongBtn"),
+    searchLoading: $("searchLoading"),
+    searchResults: $("searchResults"),
+    searchEmpty: $("searchEmpty"),
 };
 
 // ─── Initialization ────────────────────────────────────────────
@@ -156,7 +165,18 @@ function bindEvents() {
             closeEditModal();
             closeRateUnratedModal();
             closeSettings();
+            closeSearchModal();
         }
+    });
+    // Search modal
+    dom.btnSearchSong.addEventListener("click", openSearchModal);
+    dom.searchModalClose.addEventListener("click", closeSearchModal);
+    dom.searchModal.addEventListener("click", (e) => {
+        if (e.target === dom.searchModal) closeSearchModal();
+    });
+    dom.searchSongBtn.addEventListener("click", doSongSearch);
+    dom.searchSongInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") doSongSearch();
     });
 }
 
@@ -397,6 +417,10 @@ function showTrackCard(track, animate) {
     } else {
         dom.npAlreadyRated.classList.add("hidden");
         dom.npRatingForm.classList.remove("hidden");
+        // Always re-apply slider constraints
+        dom.npRatingSlider.min = appSettings.ratingMin;
+        dom.npRatingSlider.max = appSettings.ratingMax;
+        dom.npRangeLabel.textContent = `(${appSettings.ratingMin}–${appSettings.ratingMax})`;
         if (animate) {
             const mid = Math.round((appSettings.ratingMin + appSettings.ratingMax) / 2);
             dom.npRatingSlider.value = mid;
@@ -741,10 +765,79 @@ function toast(message, type = "info") {
     }, 3000);
 }
 
-// ─── Utilities ─────────────────────────────────────────────────
+// ─── Search Modal ──────────────────────────────────────────────
+function openSearchModal() {
+    dom.searchModal.classList.remove("hidden");
+    dom.searchSongInput.value = "";
+    dom.searchResults.innerHTML = "";
+    dom.searchEmpty.classList.add("hidden");
+    dom.searchLoading.classList.add("hidden");
+    setTimeout(() => dom.searchSongInput.focus(), 100);
+}
+
+function closeSearchModal() {
+    dom.searchModal.classList.add("hidden");
+}
+
+async function doSongSearch() {
+    const query = dom.searchSongInput.value.trim();
+    if (!query) return;
+
+    dom.searchResults.innerHTML = "";
+    dom.searchEmpty.classList.add("hidden");
+    dom.searchLoading.classList.remove("hidden");
+
+    try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        dom.searchLoading.classList.add("hidden");
+
+        if (!res.ok) {
+            toast(data.error || "Search failed", "error");
+            return;
+        }
+
+        const results = data.results || [];
+        if (!results.length) {
+            dom.searchEmpty.classList.remove("hidden");
+            return;
+        }
+
+        dom.searchResults.innerHTML = results.map((track) => {
+            const rated = track.alreadyRated;
+            const badge = rated
+                ? `<span class="search-result-badge rated">Rated ${track.existingRating.rating}</span>`
+                : "";
+            return `
+                <div class="search-result-item${rated ? " already-rated" : ""}" data-vid="${track.videoId}">
+                    <img class="search-result-art" src="${track.albumArt || ""}" alt="" onerror="this.style.visibility='hidden'">
+                    <div class="search-result-info">
+                        <div class="search-result-title">${esc(track.title)}</div>
+                        <div class="search-result-meta">${esc(track.artist)} · ${esc(track.album)}</div>
+                    </div>
+                    ${badge}
+                </div>`;
+        }).join("");
+
+        // Attach click handlers
+        dom.searchResults.querySelectorAll(".search-result-item").forEach((el, i) => {
+            el.addEventListener("click", () => {
+                const track = results[i];
+                acceptTrack(track, true);
+                closeSearchModal();
+                toast(`Loaded: ${track.title}`, "success");
+            });
+        });
+    } catch (e) {
+        dom.searchLoading.classList.add("hidden");
+        toast("Search failed: " + (e.message || e), "error");
+    }
+}
+
 function esc(str) {
     if (!str) return "";
     const el = document.createElement("span");
     el.textContent = str;
     return el.innerHTML;
 }
+

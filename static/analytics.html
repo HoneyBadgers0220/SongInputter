@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SongRate Analytics</title>
+    <meta name="description" content="In-depth data analysis for your YouTube Music ratings.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="analytics.css">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#6366f1">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+
+<body>
+    <!-- Header -->
+    <header class="app-header">
+        <div class="header-left">
+            <a href="/" class="logo" style="text-decoration:none">
+                <span class="logo-icon">&#9835;</span>
+                <span class="logo-text">SongRate</span>
+            </a>
+        </div>
+        <div class="header-right">
+            <nav class="analytics-nav">
+                <a href="/" class="nav-link">Home</a>
+                <a href="/analytics" class="nav-link active">Analytics</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container analytics-container">
+
+        <!-- Summary Cards -->
+        <div class="analytics-summary">
+            <div class="summary-card">
+                <div class="summary-value" id="sumTotal">0</div>
+                <div class="summary-label">Songs Rated</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-value" id="sumGlobalMean">--</div>
+                <div class="summary-label">Global Mean</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-value" id="sumArtists">0</div>
+                <div class="summary-label">Artists</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-value" id="sumAlbums">0</div>
+                <div class="summary-label">Albums</div>
+            </div>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="tab-bar">
+            <button class="tab-btn active" data-tab="artists">Artists</button>
+            <button class="tab-btn" data-tab="albums">Albums</button>
+            <button class="tab-btn" data-tab="charts">Charts</button>
+            <button class="tab-btn" data-tab="custom">Custom Graph</button>
+        </div>
+
+        <!-- Shrinkage Control (shared across tabs) -->
+        <div class="shrinkage-control">
+            <label>Bayesian Shrinkage (C):
+                <input type="range" id="shrinkageSlider" min="0" max="20" step="0.5" value="5">
+                <input type="number" id="shrinkageValue" value="5" min="0" step="0.5" class="input-sm-num">
+            </label>
+            <button class="btn-sm" id="saveShrinkageDefault" title="Save as default">Set Default</button>
+        </div>
+
+        <!-- ═══ Artists Tab ═══ -->
+        <section class="tab-panel active" id="tabArtists">
+            <div class="table-controls">
+                <input type="text" id="artistSearch" class="input-search" placeholder="Search artists...">
+                <label class="min-filter">
+                    Min appearances:
+                    <input type="number" id="artistMinAppearances" value="1" min="1" class="input-sm-num">
+                </label>
+            </div>
+            <div class="table-wrap">
+                <table class="analytics-table" id="artistTable">
+                    <thead>
+                        <tr>
+                            <th data-sort="rank">#</th>
+                            <th data-sort="name">Artist</th>
+                            <th data-sort="appearances">Songs</th>
+                            <th data-sort="totalScore">Total</th>
+                            <th data-sort="avgScore">Avg</th>
+                            <th data-sort="adjustedScore" class="sorted-desc">Adjusted</th>
+                            <th data-sort="minRating">Min</th>
+                            <th data-sort="maxRating">Max</th>
+                            <th data-sort="albumCount">Albums</th>
+                        </tr>
+                    </thead>
+                    <tbody id="artistTableBody"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ═══ Albums Tab ═══ -->
+        <section class="tab-panel" id="tabAlbums">
+            <div class="table-controls">
+                <input type="text" id="albumSearch" class="input-search" placeholder="Search albums...">
+                <label class="min-filter">
+                    Min tracks:
+                    <input type="number" id="albumMinTracks" value="1" min="1" class="input-sm-num">
+                </label>
+            </div>
+            <div class="table-wrap">
+                <table class="analytics-table" id="albumTable">
+                    <thead>
+                        <tr>
+                            <th data-sort="rank">#</th>
+                            <th></th>
+                            <th data-sort="name">Album</th>
+                            <th data-sort="artist">Artist</th>
+                            <th data-sort="year">Year</th>
+                            <th data-sort="appearances">Tracks</th>
+                            <th data-sort="totalScore">Total</th>
+                            <th data-sort="avgScore">Avg</th>
+                            <th data-sort="adjustedScore" class="sorted-desc">Adjusted</th>
+                        </tr>
+                    </thead>
+                    <tbody id="albumTableBody"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ═══ Charts Tab ═══ -->
+        <section class="tab-panel" id="tabCharts">
+            <div class="chart-filters">
+                <span class="filter-label">Filters:</span>
+                <label class="filter-item">Min Songs <input type="number" id="chartMinSongs" value="1" min="1"
+                        class="input-sm-num"></label>
+                <label class="filter-item">Year From <input type="number" id="chartYearFrom" class="input-sm-num"
+                        placeholder="Any"></label>
+                <label class="filter-item">Year To <input type="number" id="chartYearTo" class="input-sm-num"
+                        placeholder="Any"></label>
+                <label class="filter-item">Rating ≥ <input type="number" id="chartRatingMin" class="input-sm-num"
+                        placeholder="Any" step="0.5"></label>
+                <label class="filter-item">Rating ≤ <input type="number" id="chartRatingMax" class="input-sm-num"
+                        placeholder="Any" step="0.5"></label>
+                <button class="btn-sm" id="chartFilterApply">Apply</button>
+                <button class="btn-sm btn-ghost" id="chartFilterReset">Reset</button>
+            </div>
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3>Rating Distribution</h3>
+                    <canvas id="chartDistribution"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Ratings Over Time</h3>
+                    <canvas id="chartTimeline"></canvas>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3>Top 10 Artists by</h3>
+                        <select id="artistChartMetric" class="chart-metric-select">
+                            <option value="adjustedScore">Adjusted Score</option>
+                            <option value="avgScore">Average Score</option>
+                            <option value="totalScore">Total Score</option>
+                            <option value="appearances">Songs Rated</option>
+                            <option value="albumCount">Albums</option>
+                            <option value="minRating">Min Rating</option>
+                            <option value="maxRating">Max Rating</option>
+                            <option value="range">Range (Max - Min)</option>
+                            <option value="scorePerAlbum">Score per Album</option>
+                        </select>
+                    </div>
+                    <canvas id="chartTopArtists"></canvas>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3>Top 10 Albums by</h3>
+                        <select id="albumChartMetric" class="chart-metric-select">
+                            <option value="adjustedScore">Adjusted Score</option>
+                            <option value="avgScore">Average Score</option>
+                            <option value="totalScore">Total Score</option>
+                            <option value="appearances">Tracks Rated</option>
+                            <option value="minRating">Min Rating</option>
+                            <option value="maxRating">Max Rating</option>
+                            <option value="range">Range (Max - Min)</option>
+                        </select>
+                    </div>
+                    <canvas id="chartTopAlbums"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Ratings by Decade</h3>
+                    <canvas id="chartDecades"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Average Rating Trend</h3>
+                    <canvas id="chartTrend"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Artist Songs vs Total Score</h3>
+                    <canvas id="chartArtistScatter"></canvas>
+                </div>
+                <div class="chart-card chart-card-wide">
+                    <h3>Top 5 Artists Comparison</h3>
+                    <canvas id="chartRadar"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ Custom Graph Tab ═══ -->
+        <section class="tab-panel" id="tabCustom">
+            <div class="custom-builder">
+                <div class="builder-controls">
+                    <div class="builder-field">
+                        <label>Chart Type</label>
+                        <select id="customChartType">
+                            <option value="bar">Bar</option>
+                            <option value="horizontalBar">Horizontal Bar</option>
+                            <option value="line">Line</option>
+                            <option value="pie">Pie / Doughnut</option>
+                            <option value="scatter">Scatter</option>
+                        </select>
+                    </div>
+                    <div class="builder-field">
+                        <label>Group By (X-axis)</label>
+                        <select id="customGroupBy">
+                            <option value="artist">Artist</option>
+                            <option value="album">Album</option>
+                            <option value="year">Release Year</option>
+                            <option value="rating">Rating Value</option>
+                            <option value="ratedMonth">Month Rated</option>
+                            <option value="tag">Tag</option>
+                        </select>
+                    </div>
+                    <div class="builder-field">
+                        <label>Metric (Y-axis)</label>
+                        <select id="customMetric">
+                            <option value="count">Count</option>
+                            <option value="avgRating">Avg Rating</option>
+                            <option value="totalScore">Total Score</option>
+                            <option value="adjustedScore">Adjusted Score</option>
+                        </select>
+                    </div>
+                    <div class="builder-field">
+                        <label>Sort</label>
+                        <select id="customSort">
+                            <option value="value-desc">Highest First</option>
+                            <option value="value-asc">Lowest First</option>
+                            <option value="label-asc">Name A-Z</option>
+                            <option value="label-desc">Name Z-A</option>
+                        </select>
+                    </div>
+                    <div class="builder-field">
+                        <label>Max Items</label>
+                        <input type="number" id="customLimit" value="20" min="1" max="100" class="input-sm-num">
+                    </div>
+                    <div class="builder-field">
+                        <label>Min Rating</label>
+                        <input type="number" id="customMinRating" class="input-sm-num" placeholder="Any">
+                    </div>
+                    <div class="builder-field">
+                        <label>Max Rating</label>
+                        <input type="number" id="customMaxRating" class="input-sm-num" placeholder="Any">
+                    </div>
+                    <div class="builder-field builder-action">
+                        <button class="btn-primary" id="customGenerate">Generate</button>
+                    </div>
+                </div>
+                <div class="chart-card chart-card-custom">
+                    <h3 id="customChartTitle">Custom Chart</h3>
+                    <canvas id="chartCustom"></canvas>
+                    <p class="chart-empty hidden" id="customEmpty">Configure options above and click Generate.</p>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="analytics.js"></script>
+</body>
+
+</html>

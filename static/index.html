@@ -36,6 +36,14 @@
                 <span class="status-text">Connecting…</span>
             </div>
             <div class="header-actions">
+                <a href="/analytics" class="btn-icon" title="Analytics"
+                    style="text-decoration:none;display:inline-flex;align-items:center;gap:4px">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 20V10" />
+                        <path d="M12 20V4" />
+                        <path d="M6 20v-6" />
+                    </svg>
+                </a>
                 <button class="btn-icon" id="btnSettings" title="Settings">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="3" />
@@ -67,7 +75,17 @@
     <main class="app-main">
         <!-- Now Playing Section -->
         <section class="now-playing-section" id="nowPlayingSection">
-            <h2 class="section-title">Now Playing</h2>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+                <h2 class="section-title" style="margin-bottom:0">Now Playing</h2>
+                <button class="btn-sm" id="btnSearchSong" title="Search for a song to rate">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        style="vertical-align:-2px">
+                        <circle cx="11" cy="11" r="8" />
+                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    Search & Rate
+                </button>
+            </div>
 
             <!-- Empty state -->
             <div class="now-playing-empty" id="nowPlayingEmpty">
@@ -304,6 +322,28 @@
             </div>
             <div class="modal-footer">
                 <button class="btn-primary" id="settingsSave">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── Search Song Modal ─────────────────────────────── -->
+    <div class="modal-overlay hidden" id="searchModal">
+        <div class="modal-content" style="max-width:560px">
+            <div class="modal-header">
+                <h2>Search YouTube Music</h2>
+                <button class="modal-close" id="searchModalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="display:flex;gap:8px;margin-bottom:16px">
+                    <input type="text" id="searchSongInput" class="input-search"
+                        placeholder="Search for a song, artist, or album..." style="flex:1">
+                    <button class="btn-primary" id="searchSongBtn">Search</button>
+                </div>
+                <div id="searchLoading" class="hidden" style="text-align:center;padding:20px;color:var(--text-muted)">
+                    Searching...</div>
+                <div id="searchResults" class="search-results-grid"></div>
+                <div id="searchEmpty" class="hidden" style="text-align:center;padding:30px;color:var(--text-muted)">No
+                    results found. Try a different search.</div>
             </div>
         </div>
     </div>
