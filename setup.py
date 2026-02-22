@@ -1,6 +1,11 @@
 """
-YouTube Music Song Rating App — Setup Wizard
-Walks the user through installing dependencies and authenticating with YouTube Music.
+YouTube Music Song Rating App — Setup Wizard (CLI fallback)
+
+NOTE: You can now run setup directly in the browser!
+      Just start the server with 'python server.py' and open http://localhost:5000.
+      If authentication is missing, the app will walk you through setup automatically.
+
+      This CLI script is kept as a fallback for headless/terminal-only environments.
 """
 
 import subprocess

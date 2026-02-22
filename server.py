@@ -5,6 +5,7 @@ Polls ytmusicapi for currently playing track and manages song ratings.
 
 import json
 import os
+import re
 import socket
 import time
 import uuid
@@ -429,6 +430,147 @@ def api_analytics():
 def api_status():
     """Check if YTMusic is authenticated."""
     return jsonify({"authenticated": ytmusic is not None})
+
+
+# ─── Setup Endpoints ────────────────────────────────────────────────────────
+@app.route("/api/setup/status")
+def api_setup_status():
+    """Check if setup is needed."""
+    has_file = BROWSER_AUTH_FILE.exists()
+    return jsonify({
+        "needsSetup": ytmusic is None,
+        "hasAuthFile": has_file,
+        "authenticated": ytmusic is not None,
+    })
+
+
+@app.route("/api/setup/headers", methods=["POST"])
+def api_setup_headers():
+    """Accept pasted headers and generate browser.json."""
+    global ytmusic
+    data = request.get_json()
+    if not data or "headers" not in data:
+        return jsonify({"error": "No headers provided"}), 400
+
+    raw = data["headers"].strip()
+    if not raw:
+        return jsonify({"error": "Empty headers"}), 400
+
+    try:
+        parsed = _parse_auth_headers(raw)
+        if not parsed:
+            return jsonify({"error": "Could not parse headers. See instructions for your browser."}), 400
+
+        # Check for required fields
+        lower_keys = {k.lower(): k for k in parsed}
+        if "cookie" not in lower_keys:
+            return jsonify({
+                "error": "Missing 'Cookie' header. Chrome sometimes hides cookies — try the 'Copy as fetch (Node.js)' method or use Firefox."
+            }), 400
+
+        # Try ytmusicapi.setup with raw headers first (most reliable)
+        headers_raw = _dict_to_raw_headers(parsed)
+
+        import ytmusicapi
+        ytmusicapi.setup(filepath=str(BROWSER_AUTH_FILE), headers_raw=headers_raw)
+
+        # Re-initialize
+        ytmusic = YTMusic(str(BROWSER_AUTH_FILE))
+        return jsonify({"success": True, "message": "Authentication saved successfully!"})
+
+    except Exception as e:
+        return jsonify({"error": f"Setup failed: {str(e)}"}), 500
+
+
+@app.route("/api/setup/verify")
+def api_setup_verify():
+    """Verify the current auth by fetching history."""
+    if ytmusic is None:
+        return jsonify({"verified": False, "error": "Not authenticated"})
+
+    try:
+        history = ytmusic.get_history()
+        if history:
+            latest = history[0]
+            title = latest.get("title", "Unknown")
+            artist = ", ".join(a.get("name", "") for a in latest.get("artists", []))
+            return jsonify({
+                "verified": True,
+                "message": f"Connected! Most recent: {title} by {artist}",
+            })
+        return jsonify({"verified": True, "message": "Connected! (No listening history yet)"})
+    except Exception as e:
+        return jsonify({"verified": False, "error": f"Verification failed: {str(e)}"})
+
+
+def _parse_auth_headers(raw):
+    """Auto-detect header format and return a dict. Supports:
+    1. Firefox/Chrome raw headers (key: value per line)
+    2. Chrome 'Copy as fetch (Node.js)' format
+    3. Direct JSON object
+    """
+    raw = raw.strip()
+
+    # ── Attempt 1: Direct JSON object { "key": "value", ... }
+    if raw.startswith("{"):
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+
+    # ── Attempt 2: Chrome 'Copy as fetch (Node.js)' — extract headers object
+    fetch_match = re.search(
+        r'["\']?headers["\']?\s*[=:]\s*(\{[^}]+\})',
+        raw,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if fetch_match:
+        json_str = fetch_match.group(1)
+        # Fix single quotes to double quotes for JSON parsing
+        json_str = json_str.replace("'", '"')
+        try:
+            obj = json.loads(json_str)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+
+    # ── Attempt 3: Raw key: value lines (Firefox copy, Chrome manual copy)
+    lines = raw.splitlines()
+    result = {}
+    current_key = None
+    for line in lines:
+        # Skip blank lines and HTTP method lines (GET /browse, POST /browse)
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.upper().startswith(("GET ", "POST ", "PUT ", "DELETE ", "PATCH ", "OPTIONS ")):
+            continue
+
+        colon_idx = stripped.find(":")
+        if colon_idx > 0:
+            key = stripped[:colon_idx].strip()
+            value = stripped[colon_idx + 1:].strip()
+            # Skip pseudo-headers like :authority, :method, :path, :scheme
+            if key.startswith(":"):
+                continue
+            result[key] = value
+            current_key = key
+        elif current_key:
+            # Continuation line (wrapped header value)
+            result[current_key] += " " + stripped
+
+    if result:
+        return result
+
+    return None
+
+
+def _dict_to_raw_headers(headers_dict):
+    """Convert a headers dict back to raw 'key: value' format for ytmusicapi.setup()."""
+    return "\n".join(f"{k}: {v}" for k, v in headers_dict.items())
 
 
 @app.route("/api/settings", methods=["GET"])
@@ -1006,13 +1148,13 @@ if __name__ == "__main__":
     print("=" * 50)
 
     if init_ytmusic():
-        local_ip = _get_local_ip()
-        print(f"  → Ratings file: {RATINGS_FILE}")
-        print(f"  → Local:   http://localhost:5000")
-        print(f"  → Network: http://{local_ip}:5000")
-        print(f"  Open the Network URL on your phone!")
-        print("=" * 50)
-        app.run(host="0.0.0.0", debug=True, port=5000, use_reloader=False)
+        print("  ✓ YTMusic ready")
     else:
-        print("\n  ✗ Failed to initialize. Run 'python setup.py' first.")
-        print("=" * 50)
+        print("  ⚠ YTMusic not authenticated — setup wizard will appear in browser")
+
+    local_ip = _get_local_ip()
+    print(f"  → Ratings file: {RATINGS_FILE}")
+    print(f"  → Local:   http://localhost:5000")
+    print(f"  → Network: http://{local_ip}:5000")
+    print("=" * 50)
+    app.run(host="0.0.0.0", debug=True, port=5000, use_reloader=False)

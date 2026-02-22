@@ -22,6 +22,123 @@
 </head>
 
 <body>
+    <!-- ─── Setup Wizard (shown when auth is missing) ───────── -->
+    <div id="setupWizard" class="setup-wizard hidden">
+        <div class="setup-container">
+            <div class="setup-logo">
+                <span class="logo-icon" style="font-size:40px">♫</span>
+                <h1 class="setup-title">SongRate Setup</h1>
+                <p class="setup-subtitle">Connect your YouTube Music account to get started</p>
+            </div>
+
+            <!-- Step indicator -->
+            <div class="setup-steps">
+                <div class="setup-step active" id="setupStep1Indicator">
+                    <span class="step-num">1</span>
+                    <span class="step-label">Copy Headers</span>
+                </div>
+                <div class="setup-step-line"></div>
+                <div class="setup-step" id="setupStep2Indicator">
+                    <span class="step-num">2</span>
+                    <span class="step-label">Paste</span>
+                </div>
+                <div class="setup-step-line"></div>
+                <div class="setup-step" id="setupStep3Indicator">
+                    <span class="step-num">3</span>
+                    <span class="step-label">Verify</span>
+                </div>
+            </div>
+
+            <!-- Step 1: Instructions -->
+            <div class="setup-panel" id="setupStep1">
+                <div class="setup-browser-tabs">
+                    <button class="setup-tab active" data-browser="firefox" id="tabFirefox">🦊 Firefox</button>
+                    <button class="setup-tab" data-browser="chrome" id="tabChrome">🌐 Chrome / Edge</button>
+                </div>
+
+                <!-- Firefox instructions -->
+                <div class="setup-instructions" id="instrFirefox">
+                    <ol class="setup-steps-list">
+                        <li>Open <strong>YouTube Music</strong> (<a href="https://music.youtube.com"
+                                target="_blank">music.youtube.com</a>) and make sure you're <strong>logged in</strong>
+                        </li>
+                        <li>Open <strong>Developer Tools</strong> — press <kbd>F12</kbd> or <kbd>Ctrl+Shift+I</kbd></li>
+                        <li>Go to the <strong>Network</strong> tab</li>
+                        <li>Type <code>/browse</code> in the filter bar</li>
+                        <li>Click around in YouTube Music (e.g. click <strong>Library</strong>) to trigger a request
+                        </li>
+                        <li>Right-click the <code>browse</code> request → <strong>Copy → Copy Request Headers</strong>
+                        </li>
+                    </ol>
+                </div>
+
+                <!-- Chrome instructions -->
+                <div class="setup-instructions hidden" id="instrChrome">
+                    <p class="setup-note">Choose one of these methods:</p>
+
+                    <div class="setup-method">
+                        <h4>Method A — Copy as fetch <span class="setup-recommended">Recommended</span></h4>
+                        <ol class="setup-steps-list">
+                            <li>Open <strong>YouTube Music</strong> (<a href="https://music.youtube.com"
+                                    target="_blank">music.youtube.com</a>) and make sure you're <strong>logged
+                                    in</strong></li>
+                            <li>Open <strong>Developer Tools</strong> — press <kbd>F12</kbd> or <kbd>Ctrl+Shift+I</kbd>
+                            </li>
+                            <li>Go to the <strong>Network</strong> tab</li>
+                            <li>Type <code>/browse</code> in the filter bar</li>
+                            <li>Click around in YouTube Music to trigger a request</li>
+                            <li>Right-click any <code>browse?</code> request → <strong>Copy as fetch (Node.js)</strong>
+                            </li>
+                        </ol>
+                    </div>
+
+                    <div class="setup-method">
+                        <h4>Method B — Manual JSON</h4>
+                        <ol class="setup-steps-list">
+                            <li>Follow steps 1–5 from Method A</li>
+                            <li>Click a <code>browse?</code> request → go to the <strong>Headers</strong> tab → scroll
+                                to <strong>Request Headers</strong></li>
+                            <li>Copy and paste these values as JSON:
+                                <pre class="setup-json-template">{
+  "Cookie": "paste cookie value here",
+  "Authorization": "paste auth value here",
+  "X-Goog-AuthUser": "0",
+  "x-origin": "https://music.youtube.com"
+}</pre>
+                            </li>
+                        </ol>
+                    </div>
+                </div>
+
+                <button class="btn-primary setup-next-btn" id="setupGoToPaste">
+                    Next: Paste Headers →
+                </button>
+            </div>
+
+            <!-- Step 2: Paste -->
+            <div class="setup-panel hidden" id="setupStep2">
+                <label class="setup-paste-label">Paste your copied headers below:</label>
+                <textarea id="setupHeadersInput" class="setup-textarea"
+                    placeholder="Paste your request headers here...&#10;&#10;Supports:&#10;• Firefox raw headers (right-click → Copy Request Headers)&#10;• Chrome 'Copy as fetch (Node.js)' output&#10;• JSON object with Cookie, Authorization, etc."></textarea>
+
+                <div class="setup-feedback hidden" id="setupFeedback"></div>
+
+                <div class="setup-btn-row">
+                    <button class="btn-sm" id="setupBackToInstr">← Back</button>
+                    <button class="btn-primary" id="setupSubmitHeaders">Submit & Authenticate</button>
+                </div>
+            </div>
+
+            <!-- Step 3: Verify -->
+            <div class="setup-panel hidden" id="setupStep3">
+                <div class="setup-verify-status" id="setupVerifyStatus">
+                    <div class="setup-spinner"></div>
+                    <p>Verifying connection…</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- ─── Header ─────────────────────────────────────────── -->
     <header class="app-header">
         <div class="header-left">

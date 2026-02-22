@@ -113,14 +113,25 @@ const dom = {
 };
 
 // ─── Initialization ────────────────────────────────────────────
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
+    // Check if setup is needed before loading anything else
+    const setupData = await api("/api/setup/status");
+    if (setupData && setupData.needsSetup) {
+        showSetupWizard();
+        return;
+    }
+
+    initMainApp();
+});
+
+function initMainApp() {
     loadSettings();
     checkStatus();
     loadRatings();
     loadUnrated();
     startPolling();
     bindEvents();
-});
+}
 
 function bindEvents() {
     dom.npRatingSlider.addEventListener("input", () => {
@@ -1064,3 +1075,187 @@ async function loadOtherVersions(track) {
         dom.otherVersionsList.innerHTML = '<div class="alt-versions-empty">Could not load</div>';
     }
 }
+
+// ─── Setup Wizard ──────────────────────────────────────────────
+function showSetupWizard() {
+    const wizard = document.getElementById("setupWizard");
+    const header = document.querySelector(".app-header");
+    const main = document.querySelector(".app-main");
+
+    wizard.classList.remove("hidden");
+    if (header) header.style.display = "none";
+    if (main) main.style.display = "none";
+
+    bindSetupEvents();
+}
+
+function hideSetupWizard() {
+    const wizard = document.getElementById("setupWizard");
+    const header = document.querySelector(".app-header");
+    const main = document.querySelector(".app-main");
+
+    wizard.classList.add("hidden");
+    if (header) header.style.display = "";
+    if (main) main.style.display = "";
+}
+
+function bindSetupEvents() {
+    // Browser tabs
+    const tabFirefox = document.getElementById("tabFirefox");
+    const tabChrome = document.getElementById("tabChrome");
+    const instrFirefox = document.getElementById("instrFirefox");
+    const instrChrome = document.getElementById("instrChrome");
+
+    tabFirefox.addEventListener("click", () => {
+        tabFirefox.classList.add("active");
+        tabChrome.classList.remove("active");
+        instrFirefox.classList.remove("hidden");
+        instrChrome.classList.add("hidden");
+    });
+
+    tabChrome.addEventListener("click", () => {
+        tabChrome.classList.add("active");
+        tabFirefox.classList.remove("active");
+        instrChrome.classList.remove("hidden");
+        instrFirefox.classList.add("hidden");
+    });
+
+    // Step navigation
+    document.getElementById("setupGoToPaste").addEventListener("click", () => {
+        setupGoToStep(2);
+    });
+
+    document.getElementById("setupBackToInstr").addEventListener("click", () => {
+        setupGoToStep(1);
+    });
+
+    // Submit headers
+    document.getElementById("setupSubmitHeaders").addEventListener("click", submitSetupHeaders);
+}
+
+function setupGoToStep(step) {
+    const panels = [
+        document.getElementById("setupStep1"),
+        document.getElementById("setupStep2"),
+        document.getElementById("setupStep3"),
+    ];
+    const indicators = [
+        document.getElementById("setupStep1Indicator"),
+        document.getElementById("setupStep2Indicator"),
+        document.getElementById("setupStep3Indicator"),
+    ];
+
+    panels.forEach((p, i) => {
+        p.classList.toggle("hidden", i !== step - 1);
+    });
+    indicators.forEach((ind, i) => {
+        ind.classList.toggle("active", i <= step - 1);
+        ind.classList.toggle("completed", i < step - 1);
+    });
+
+    // Focus textarea when on step 2
+    if (step === 2) {
+        setTimeout(() => document.getElementById("setupHeadersInput").focus(), 100);
+    }
+}
+
+async function submitSetupHeaders() {
+    const textarea = document.getElementById("setupHeadersInput");
+    const feedback = document.getElementById("setupFeedback");
+    const submitBtn = document.getElementById("setupSubmitHeaders");
+    const raw = textarea.value.trim();
+
+    if (!raw) {
+        showSetupFeedback("Please paste your headers first.", "error");
+        return;
+    }
+
+    // Disable button
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Authenticating…";
+    showSetupFeedback("Sending headers to server…", "info");
+
+    try {
+        const res = await fetch("/api/setup/headers", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ headers: raw }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+            showSetupFeedback(data.error || "Authentication failed.", "error");
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Submit & Authenticate";
+            return;
+        }
+
+        // Success — go to verify step
+        showSetupFeedback("", "hidden");
+        setupGoToStep(3);
+        verifySetup();
+
+    } catch (err) {
+        showSetupFeedback("Network error: " + (err.message || err), "error");
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Submit & Authenticate";
+    }
+}
+
+async function verifySetup() {
+    const statusEl = document.getElementById("setupVerifyStatus");
+
+    try {
+        const data = await api("/api/setup/verify");
+
+        if (data && data.verified) {
+            statusEl.innerHTML = `
+                <div class="setup-success-icon">✓</div>
+                <h3 class="setup-success-title">You're all set!</h3>
+                <p class="setup-success-msg">${esc(data.message)}</p>
+                <button class="btn-primary" id="setupFinish">Launch SongRate →</button>
+            `;
+            document.getElementById("setupFinish").addEventListener("click", () => {
+                hideSetupWizard();
+                initMainApp();
+            });
+        } else {
+            statusEl.innerHTML = `
+                <div class="setup-fail-icon">✗</div>
+                <h3 class="setup-fail-title">Verification Failed</h3>
+                <p class="setup-fail-msg">${esc(data?.error || "Could not connect to YouTube Music.")}</p>
+                <p class="setup-fail-hint">Your auth was saved but might be invalid. Try again with fresh headers.</p>
+                <button class="btn-sm" id="setupRetry">← Try Again</button>
+            `;
+            document.getElementById("setupRetry").addEventListener("click", () => {
+                document.getElementById("setupHeadersInput").value = "";
+                const submitBtn = document.getElementById("setupSubmitHeaders");
+                submitBtn.disabled = false;
+                submitBtn.textContent = "Submit & Authenticate";
+                setupGoToStep(1);
+            });
+        }
+    } catch (err) {
+        statusEl.innerHTML = `
+            <div class="setup-fail-icon">✗</div>
+            <h3 class="setup-fail-title">Something went wrong</h3>
+            <p class="setup-fail-msg">${esc(err.message || String(err))}</p>
+            <button class="btn-sm" id="setupRetry">← Try Again</button>
+        `;
+        document.getElementById("setupRetry").addEventListener("click", () => {
+            setupGoToStep(1);
+        });
+    }
+}
+
+function showSetupFeedback(msg, type) {
+    const el = document.getElementById("setupFeedback");
+    if (type === "hidden" || !msg) {
+        el.classList.add("hidden");
+        return;
+    }
+    el.classList.remove("hidden");
+    el.className = `setup-feedback ${type}`;
+    el.textContent = msg;
+}
+
