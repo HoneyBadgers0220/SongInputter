@@ -29,6 +29,7 @@ DEFAULT_SETTINGS = {
     "ratingMin": 1,
     "ratingMax": 10,
     "shrinkageC": 5,
+    "sidebarMode": "album",
 }
 
 # ─── Flask App ──────────────────────────────────────────────────────────────
@@ -272,6 +273,7 @@ def api_analytics():
     ratings = _load_ratings()
     settings = _load_settings()
     shrinkage_c = float(request.args.get("c", settings.get("shrinkageC", 5)))
+    split_artists = request.args.get("splitArtists", "0") == "1"
 
     if not ratings:
         return jsonify({"artists": [], "albums": [], "timeline": [],
@@ -285,12 +287,17 @@ def api_analytics():
     # ── Artist rankings ──
     artist_data = {}
     for r in ratings:
-        a = r.get("artist", "Unknown")
-        if a not in artist_data:
-            artist_data[a] = {"scores": [], "albums": set()}
-        if isinstance(r.get("rating"), (int, float)):
-            artist_data[a]["scores"].append(r["rating"])
-        artist_data[a]["albums"].add(r.get("album", ""))
+        raw_artist = r.get("artist", "Unknown")
+        # Split multi-artist credits if enabled, otherwise treat as single
+        artist_names = [a.strip() for a in raw_artist.split(",")] if split_artists else [raw_artist]
+        for a in artist_names:
+            if not a:
+                continue
+            if a not in artist_data:
+                artist_data[a] = {"scores": [], "albums": set()}
+            if isinstance(r.get("rating"), (int, float)):
+                artist_data[a]["scores"].append(r["rating"])
+            artist_data[a]["albums"].add(r.get("album", ""))
 
     artists = []
     for name, d in artist_data.items():
@@ -594,6 +601,8 @@ def update_settings():
         settings["ratingMax"] = int(data["ratingMax"])
     if "shrinkageC" in data:
         settings["shrinkageC"] = max(0, float(data["shrinkageC"]))
+    if "sidebarMode" in data and data["sidebarMode"] in ("album", "related"):
+        settings["sidebarMode"] = data["sidebarMode"]
 
     if settings["ratingMin"] >= settings["ratingMax"]:
         return jsonify({"error": "Min must be less than max"}), 400
@@ -789,6 +798,54 @@ def api_find_versions():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/album-tracks")
+def api_album_tracks():
+    """Return all tracks on an album by its browseId."""
+    if ytmusic is None:
+        return jsonify({"error": "YTMusic not authenticated."}), 503
+
+    album_id = request.args.get("albumId", "").strip()
+    if not album_id:
+        return jsonify({"tracks": []})
+
+    try:
+        album_data = ytmusic.get_album(album_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    album_title = album_data.get("title", "")
+    album_year = album_data.get("year", "")
+    album_art = ""
+    thumbs = album_data.get("thumbnails", [])
+    if thumbs:
+        album_art = thumbs[-1].get("url", "")
+
+    ratings = _load_ratings()
+    rated_ids = {r.get("videoId"): r for r in ratings}
+
+    tracks = []
+    for i, track in enumerate(album_data.get("tracks", [])):
+        video_id = track.get("videoId", "")
+        artists = ", ".join(
+            a.get("name", "") for a in track.get("artists", []) if a.get("name")
+        ) or "Unknown Artist"
+        existing = rated_ids.get(video_id)
+        tracks.append({
+            "videoId": video_id,
+            "title": track.get("title", "Unknown"),
+            "artist": artists,
+            "album": album_title,
+            "albumId": album_id,
+            "albumArt": album_art,
+            "year": album_year,
+            "trackNumber": i + 1,
+            "alreadyRated": existing is not None,
+            "existingRating": existing,
+        })
+
+    return jsonify({"tracks": tracks, "album": album_title, "year": album_year})
+
+
 @app.route("/api/enrich/<album_id>")
 def enrich_album(album_id):
     """Fetch original album release year. Called lazily by frontend."""
@@ -837,13 +894,16 @@ def get_ratings():
         filtered.sort(key=lambda r: r.get(sort_by, "").lower() if isinstance(r.get(sort_by), str) else str(r.get(sort_by, "")), reverse=reverse)
 
     total = len(filtered)
-    page = filtered[offset:offset + limit]
+    if limit > 0:
+        page = filtered[offset:offset + limit]
+    else:
+        page = filtered  # limit=0 means return all
 
     return jsonify({
         "ratings": page,
         "total": total,
         "offset": offset,
-        "hasMore": offset + limit < total,
+        "hasMore": limit > 0 and offset + limit < total,
         "stats": _compute_stats(all_ratings),  # stats always on full dataset
     })
 

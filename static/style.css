@@ -369,6 +369,15 @@ body::before {
     padding: 12px 0;
 }
 
+.alt-version-track-num {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    min-width: 22px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
 .now-playing-card {
     display: flex;
     gap: 32px;
@@ -614,7 +623,30 @@ body::before {
     font-size: 36px;
     font-weight: 900;
     min-width: 48px;
+    width: 64px;
     text-align: center;
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    outline: none;
+    padding: 2px 4px;
+    font-family: inherit;
+    transition: border-color var(--transition);
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+.rating-display::-webkit-outer-spin-button,
+.rating-display::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.rating-display:focus {
+    border-color: var(--accent-primary);
     background: var(--gradient-primary);
     -webkit-background-clip: text;
     background-clip: text;

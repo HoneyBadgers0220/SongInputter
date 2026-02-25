@@ -11,7 +11,7 @@ let allRatings = [];
 let allUnrated = [];
 let pollInterval = null;
 let pollPauseTimeout = null;
-let appSettings = { ratingMin: 1, ratingMax: 10, pollPauseMs: 10000, maxRecent: 5 };
+let appSettings = { ratingMin: 1, ratingMax: 10, pollPauseMs: 10000, maxRecent: 5, sidebarMode: "album" };
 const POLL_MS = 5000;
 
 // ─── DOM Refs ──────────────────────────────────────────────────
@@ -135,13 +135,25 @@ function initMainApp() {
 
 function bindEvents() {
     dom.npRatingSlider.addEventListener("input", () => {
-        dom.npRatingDisplay.textContent = dom.npRatingSlider.value;
+        dom.npRatingDisplay.value = dom.npRatingSlider.value;
+    });
+    dom.npRatingDisplay.addEventListener("input", () => {
+        const v = clampRating(dom.npRatingDisplay.value);
+        dom.npRatingSlider.value = v;
     });
     dom.editRating.addEventListener("input", () => {
-        dom.editRatingDisplay.textContent = dom.editRating.value;
+        dom.editRatingDisplay.value = dom.editRating.value;
+    });
+    dom.editRatingDisplay.addEventListener("input", () => {
+        const v = clampRating(dom.editRatingDisplay.value);
+        dom.editRating.value = v;
     });
     dom.rateUnratedRating.addEventListener("input", () => {
-        dom.rateUnratedRatingDisplay.textContent = dom.rateUnratedRating.value;
+        dom.rateUnratedRatingDisplay.value = dom.rateUnratedRating.value;
+    });
+    dom.rateUnratedRatingDisplay.addEventListener("input", () => {
+        const v = clampRating(dom.rateUnratedRatingDisplay.value);
+        dom.rateUnratedRating.value = v;
     });
     dom.npSubmitRating.addEventListener("click", submitRating);
     dom.npEditExisting.addEventListener("click", () => {
@@ -217,6 +229,13 @@ function bindEvents() {
     });
 }
 
+// ─── Helpers ───────────────────────────────────────────────────
+function clampRating(val) {
+    const n = parseInt(val);
+    if (isNaN(n)) return appSettings.ratingMin;
+    return Math.max(appSettings.ratingMin, Math.min(appSettings.ratingMax, n));
+}
+
 // ─── API Helpers ───────────────────────────────────────────────
 async function api(url, options = {}) {
     try {
@@ -241,6 +260,7 @@ async function loadSettings() {
         appSettings.shrinkage = parseFloat(data.shrinkage) || 0;
         appSettings.pollPauseMs = parseInt(data.pollPauseMs) || 10000;
         appSettings.maxRecent = parseInt(data.maxRecent) || 5;
+        appSettings.sidebarMode = data.sidebarMode || "album";
         applySettingsToUI();
     }
 }
@@ -253,15 +273,21 @@ function applySettingsToUI() {
     dom.npRatingSlider.min = min;
     dom.npRatingSlider.max = max;
     dom.npRatingSlider.value = mid;
-    dom.npRatingDisplay.textContent = mid;
+    dom.npRatingDisplay.value = mid;
+    dom.npRatingDisplay.min = min;
+    dom.npRatingDisplay.max = max;
     dom.npRangeLabel.textContent = `(${min}–${max})`;
 
     dom.editRating.min = min;
     dom.editRating.max = max;
+    dom.editRatingDisplay.min = min;
+    dom.editRatingDisplay.max = max;
     dom.editRangeLabel.textContent = `(${min}–${max})`;
 
     dom.rateUnratedRating.min = min;
     dom.rateUnratedRating.max = max;
+    dom.rateUnratedRatingDisplay.min = min;
+    dom.rateUnratedRatingDisplay.max = max;
     dom.rateUnratedRangeLabel.textContent = `(${min}–${max})`;
 
     dom.settingsMin.value = min;
@@ -272,6 +298,13 @@ function applySettingsToUI() {
 
     const maxRecentEl = document.getElementById("settingsMaxRecent");
     if (maxRecentEl) maxRecentEl.value = appSettings.maxRecent;
+
+    const sidebarModeEl = document.getElementById("settingsSidebarMode");
+    if (sidebarModeEl) sidebarModeEl.value = appSettings.sidebarMode;
+
+    // Update sidebar title based on mode
+    const sidebarTitle = document.querySelector("#altVersionsPanel .alt-versions-title");
+    if (sidebarTitle) sidebarTitle.textContent = appSettings.sidebarMode === "album" ? "Album Tracks" : "Related";
 }
 
 function openSettings() {
@@ -289,6 +322,7 @@ async function saveSettings() {
     const max = parseInt(dom.settingsMax.value);
     const pollPauseSec = parseInt(document.getElementById("settingsPollPause").value) || 10;
     const maxRecent = parseInt(document.getElementById("settingsMaxRecent").value) || 5;
+    const sidebarMode = document.getElementById("settingsSidebarMode")?.value || "album";
 
     if (isNaN(min) || isNaN(max)) {
         toast("Please enter valid numbers", "error");
@@ -301,7 +335,7 @@ async function saveSettings() {
 
     const result = await api("/api/settings", {
         method: "POST",
-        body: JSON.stringify({ ratingMin: min, ratingMax: max, pollPauseMs: pollPauseSec * 1000, maxRecent: maxRecent }),
+        body: JSON.stringify({ ratingMin: min, ratingMax: max, pollPauseMs: pollPauseSec * 1000, maxRecent: maxRecent, sidebarMode: sidebarMode }),
     });
 
     if (result && result.success) {
@@ -309,7 +343,13 @@ async function saveSettings() {
         appSettings.ratingMax = parseInt(result.settings.ratingMax) || max;
         appSettings.pollPauseMs = parseInt(result.settings.pollPauseMs) || pollPauseSec * 1000;
         appSettings.maxRecent = parseInt(result.settings.maxRecent) || maxRecent;
+        appSettings.sidebarMode = result.settings.sidebarMode || sidebarMode;
         applySettingsToUI();
+        // Refresh the sidebar if track is playing
+        if (currentTrack) {
+            if (appSettings.sidebarMode === "album") loadAlbumTracks(currentTrack);
+            else loadAltVersions(currentTrack);
+        }
         closeSettings();
         toast("Settings saved", "success");
     } else {
@@ -431,8 +471,9 @@ function acceptTrack(track, animate, fromPoll = false) {
     // Lazy-load release year
     enrichYearIfNeeded(currentTrack);
 
-    // Auto-search for alternative versions
-    loadAltVersions(currentTrack);
+    // Load sidebar based on mode
+    if (appSettings.sidebarMode === "album") loadAlbumTracks(currentTrack);
+    else loadAltVersions(currentTrack);
     loadOtherVersions(currentTrack);
 }
 
@@ -513,7 +554,7 @@ function showTrackCard(track, animate) {
         if (animate) {
             const mid = Math.round((appSettings.ratingMin + appSettings.ratingMax) / 2);
             dom.npRatingSlider.value = mid;
-            dom.npRatingDisplay.textContent = mid;
+            dom.npRatingDisplay.value = mid;
             dom.npNotes.value = "";
             dom.npTags.value = "";
         }
@@ -524,7 +565,7 @@ function showTrackCard(track, animate) {
 async function submitRating() {
     if (!currentTrack) return;
 
-    const rating = parseInt(dom.npRatingSlider.value);
+    const rating = clampRating(dom.npRatingDisplay.value);
     const notes = dom.npNotes.value.trim();
     const tags = dom.npTags.value.split(",").map((t) => t.trim()).filter(Boolean);
 
@@ -551,9 +592,14 @@ async function submitRating() {
         currentTrack.existingRating = result.entry;
         showTrackCard(currentTrack, false);
         loadRatings();
+        pausePolling(); // Reset auto-resume timer — user is still on this song
     } else if (result && result.duplicate) {
         toast("Song already rated", "info");
-        pollNowPlaying();
+        if (currentTrack) {
+            currentTrack.alreadyRated = true;
+            currentTrack.existingRating = result.entry || currentTrack.existingRating;
+            showTrackCard(currentTrack, false);
+        }
     } else {
         toast(result?.error || "Failed to save", "error");
     }
@@ -714,7 +760,7 @@ function openRateUnratedModal(id) {
 
     const mid = Math.round((appSettings.ratingMin + appSettings.ratingMax) / 2);
     dom.rateUnratedRating.value = mid;
-    dom.rateUnratedRatingDisplay.textContent = mid;
+    dom.rateUnratedRatingDisplay.value = mid;
     dom.rateUnratedNotes.value = "";
     dom.rateUnratedTags.value = "";
 
@@ -757,7 +803,12 @@ async function saveRateUnrated() {
         closeRateUnratedModal();
         loadUnrated();
         loadRatings();
-        pollNowPlaying(); // refresh now-playing badge
+        // Refresh now-playing badge if the unrated song is the one currently showing
+        if (currentTrack && entry.videoId && currentTrack.videoId === entry.videoId) {
+            currentTrack.alreadyRated = true;
+            currentTrack.existingRating = result.entry || { rating: payload.rating };
+            showTrackCard(currentTrack, false);
+        }
     } else {
         toast(result?.error || "Failed to save rating", "error");
     }
@@ -788,7 +839,7 @@ function openEditModal(entry) {
     dom.editAlbum.value = entry.album || "";
     dom.editYear.value = entry.year || "";
     dom.editRating.value = entry.rating || appSettings.ratingMin;
-    dom.editRatingDisplay.textContent = entry.rating || appSettings.ratingMin;
+    dom.editRatingDisplay.value = entry.rating || appSettings.ratingMin;
     dom.editNotes.value = entry.notes || "";
     dom.editTags.value = (entry.tags || []).join(", ");
     dom.editModal.classList.remove("hidden");
@@ -822,7 +873,19 @@ async function saveEdit() {
         toast("Changes saved", "success");
         closeEditModal();
         loadRatings();
-        pollNowPlaying();
+        // Update current track in-place if the edited song is the one currently showing
+        // (Don't call pollNowPlaying — that would fetch whatever YTM last played,
+        //  which may be a different song from what the user manually selected)
+        if (currentTrack && result.entry && currentTrack.videoId === result.entry.videoId) {
+            currentTrack.alreadyRated = true;
+            currentTrack.existingRating = result.entry;
+            currentTrack.title = result.entry.title || currentTrack.title;
+            currentTrack.artist = result.entry.artist || currentTrack.artist;
+            currentTrack.album = result.entry.album || currentTrack.album;
+            currentTrack.year = result.entry.year || currentTrack.year;
+            showTrackCard(currentTrack, false);
+        }
+        pausePolling(); // Reset auto-resume timer — user is still on this song
     } else {
         toast(result?.error || "Failed to save", "error");
     }
@@ -1012,7 +1075,8 @@ function renderAltVersions(alts, activeVideoId) {
             showTrackCard(track, true);
             enrichYearIfNeeded(track);
             pausePolling();
-            loadAltVersions(track);
+            if (appSettings.sidebarMode === "album") loadAlbumTracks(track);
+            else loadAltVersions(track);
             loadOtherVersions(track);
             toast(`Switched to: ${track.album || track.title}`, "success");
         });
@@ -1066,13 +1130,65 @@ async function loadOtherVersions(track) {
                 showTrackCard(v, true);
                 enrichYearIfNeeded(v);
                 pausePolling();
-                loadAltVersions(v);
+                if (appSettings.sidebarMode === "album") loadAlbumTracks(v);
+                else loadAltVersions(v);
                 loadOtherVersions(v);
                 toast(`Switched to: ${v.album} version`, "success");
             });
         });
     } catch (e) {
         dom.otherVersionsList.innerHTML = '<div class="alt-versions-empty">Could not load</div>';
+    }
+}
+
+// ─── Album Tracks Sidebar ──────────────────────────────────────
+async function loadAlbumTracks(track) {
+    if (!track || !track.albumId) {
+        dom.altVersionsList.innerHTML = '<div class="alt-versions-empty">No album info available</div>';
+        return;
+    }
+
+    dom.altVersionsList.innerHTML = '<div class="alt-versions-loading">Loading album…</div>';
+
+    try {
+        const res = await fetch(`/api/album-tracks?albumId=${encodeURIComponent(track.albumId)}`);
+        const data = await res.json();
+
+        if (!res.ok || !data.tracks || !data.tracks.length) {
+            dom.altVersionsList.innerHTML = '<div class="alt-versions-empty">No tracks found</div>';
+            return;
+        }
+
+        const albumTracks = data.tracks;
+        dom.altVersionsList.innerHTML = albumTracks.map((t, i) => {
+            const isActive = t.videoId === track.videoId;
+            const ratedIndicator = t.alreadyRated ? ' <span style="color:var(--accent);font-size:11px">★</span>' : "";
+            return `
+                <div class="alt-version-item${isActive ? " active" : ""}" data-at-idx="${i}">
+                    <span class="alt-version-track-num">${t.trackNumber}</span>
+                    <div class="alt-version-info">
+                        <div class="alt-version-name">${esc(t.title)}${ratedIndicator}</div>
+                        <div class="alt-version-meta">${esc(t.artist)}</div>
+                    </div>
+                </div>`;
+        }).join("");
+
+        dom.altVersionsList.querySelectorAll(".alt-version-item").forEach((el, i) => {
+            el.addEventListener("click", () => {
+                const t = albumTracks[i];
+                if (t.videoId === track.videoId) return; // already playing
+                recentSongIds.length = 0;
+                currentTrack = t;
+                showTrackCard(t, true);
+                enrichYearIfNeeded(t);
+                pausePolling();
+                loadAlbumTracks(t);
+                loadOtherVersions(t);
+                toast(`Now playing: ${t.title}`, "success");
+            });
+        });
+    } catch (e) {
+        dom.altVersionsList.innerHTML = '<div class="alt-versions-empty">Could not load album</div>';
     }
 }
 

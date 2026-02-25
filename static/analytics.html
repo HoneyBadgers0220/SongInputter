@@ -31,9 +31,18 @@
             <nav class="analytics-nav">
                 <a href="/" class="nav-link">Home</a>
                 <a href="/analytics" class="nav-link active">Analytics</a>
+                <button class="btn-sm btn-import" id="importBtn" title="Import JSON or CSV for analysis">📁
+                    Import</button>
+                <input type="file" id="importFileInput" accept=".json,.csv" style="display:none">
             </nav>
         </div>
     </header>
+
+    <!-- Import Banner -->
+    <div class="import-banner hidden" id="importBanner">
+        <span>📁 Viewing imported data (<span class="import-count">0</span> songs) — not your saved ratings</span>
+        <button class="btn-sm" id="importDismiss">✕ Back to My Data</button>
+    </div>
 
     <main class="container analytics-container">
 
@@ -70,14 +79,35 @@
             <label>Bayesian Shrinkage (C):
                 <input type="range" id="shrinkageSlider" min="0" max="20" step="0.5" value="5">
                 <input type="number" id="shrinkageValue" value="5" min="0" step="0.5" class="input-sm-num">
+                <button class="btn-sm" id="saveShrinkageDefault" title="Save as default">Set Default</button>
+                <button class="btn-sm btn-info-toggle" id="shrinkageInfoToggle" title="What is this?">ⓘ</button>
             </label>
-            <button class="btn-sm" id="saveShrinkageDefault" title="Save as default">Set Default</button>
+            <label class="split-artists-toggle"
+                title="Count songs with multiple artist credits (e.g. 'The Shins, James Mercer') towards each artist separately">
+                <input type="checkbox" id="splitArtistsToggle" checked>
+                Split artist credits
+            </label>
+        </div>
+        <div class="shrinkage-info hidden" id="shrinkageInfo">
+            <p><strong>What is Bayesian Shrinkage?</strong> It prevents artists/albums with very few rated songs from
+                dominating the rankings with unreliable averages.</p>
+            <p>The adjusted score blends an artist's raw average with the <em>global mean</em>, weighted by sample size:
+            </p>
+            <code>adjusted = (songs × avg + C × globalMean) / (songs + C)</code>
+            <ul>
+                <li><strong>Few songs rated</strong> → score pulled toward global mean (not enough data to trust)</li>
+                <li><strong>Many songs rated</strong> → score stays close to real average (reliable)</li>
+            </ul>
+            <p><strong>C = 0</strong>: no shrinkage, pure averages &nbsp;·&nbsp; <strong>C = 5</strong>: moderate
+                (default) &nbsp;·&nbsp; <strong>C = 20</strong>: heavy, everyone converges toward the mean</p>
         </div>
 
         <!-- ═══ Artists Tab ═══ -->
         <section class="tab-panel active" id="tabArtists">
             <div class="table-controls">
-                <input type="text" id="artistSearch" class="input-search" placeholder="Search artists...">
+                <input type="text" id="artistSearch" class="input-search" placeholder="Search... (a|b  -exclude  \"
+                    exact\" /regex/)" title="Smart search: space=AND, |=OR, -term=exclude, \" phrase\"=exact,
+                    /regex/=regex">
                 <label class="min-filter">
                     Min appearances:
                     <input type="number" id="artistMinAppearances" value="1" min="1" class="input-sm-num">
@@ -106,7 +136,9 @@
         <!-- ═══ Albums Tab ═══ -->
         <section class="tab-panel" id="tabAlbums">
             <div class="table-controls">
-                <input type="text" id="albumSearch" class="input-search" placeholder="Search albums...">
+                <input type="text" id="albumSearch" class="input-search" placeholder="Search... (a|b  -exclude  \"
+                    exact\" /regex/)" title="Smart search: space=AND, |=OR, -term=exclude, \" phrase\"=exact,
+                    /regex/=regex">
                 <label class="min-filter">
                     Min tracks:
                     <input type="number" id="albumMinTracks" value="1" min="1" class="input-sm-num">
@@ -205,6 +237,14 @@
                 <div class="chart-card chart-card-wide">
                     <h3>Top 5 Artists Comparison</h3>
                     <canvas id="chartRadar"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Cumulative Songs Rated</h3>
+                    <canvas id="chartCumulative"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Tag Distribution</h3>
+                    <canvas id="chartTags"></canvas>
                 </div>
             </div>
         </section>

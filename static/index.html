@@ -245,7 +245,7 @@
                             <div class="rating-input-group">
                                 <input type="range" id="npRatingSlider" min="1" max="10" step="1" value="5"
                                     class="rating-slider">
-                                <span class="rating-display" id="npRatingDisplay">5</span>
+                                <input type="number" class="rating-display" id="npRatingDisplay" value="5">
                                 <span class="rating-range-label" id="npRangeLabel">(1–10)</span>
                             </div>
                         </div>
@@ -379,7 +379,7 @@
                     <div class="rating-input-group">
                         <input type="range" id="rateUnratedRating" min="1" max="10" step="1" value="5"
                             class="rating-slider">
-                        <span class="rating-display" id="rateUnratedRatingDisplay">5</span>
+                        <input type="number" class="rating-display" id="rateUnratedRatingDisplay" value="5">
                     </div>
                 </div>
                 <div class="form-group">
@@ -427,7 +427,7 @@
                     <label>Rating <span id="editRangeLabel">(1–10)</span></label>
                     <div class="rating-input-group">
                         <input type="range" id="editRating" min="1" max="10" step="1" value="5" class="rating-slider">
-                        <span class="rating-display" id="editRatingDisplay">5</span>
+                        <input type="number" class="rating-display" id="editRatingDisplay" value="5">
                     </div>
                 </div>
             </div>
@@ -481,6 +481,14 @@
                     <input type="number" id="settingsMaxRecent" class="input-field input-sm" value="5" min="1" max="20"
                         style="width:80px">
                     <p class="form-hint">Number of recent songs to remember to prevent reverting (default 5)</p>
+                </div>
+                <div class="settings-group" style="margin-top:16px">
+                    <label class="settings-label">Sidebar mode</label>
+                    <select id="settingsSidebarMode" class="select-sort" style="width:180px">
+                        <option value="album">Album Tracks</option>
+                        <option value="related">Related Songs</option>
+                    </select>
+                    <p class="form-hint">Show album tracklist or search-based related songs in the sidebar</p>
                 </div>
             </div>
             <div class="modal-footer">

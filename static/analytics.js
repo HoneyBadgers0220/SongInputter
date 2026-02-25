@@ -7,6 +7,7 @@
 let analyticsData = null;
 let rawRatings = [];
 let currentShrinkage = 5;
+let splitArtists = true;
 let chartInstances = {};
 let currentSort = { table: null, key: "adjustedScore", dir: "desc" };
 
@@ -26,10 +27,50 @@ const COLORS = [
 document.addEventListener("DOMContentLoaded", () => {
     initTabs();
     initShrinkage();
+    initSplitArtists();
     initTableSort();
     initCustomBuilder();
+    initCustomValidation();
     initChartFilters();
+    initImport();
     loadAnalytics();
+});
+
+function initImport() {
+    const importBtn = document.getElementById("importBtn");
+    const fileInput = document.getElementById("importFileInput");
+    const dismissBtn = document.getElementById("importDismiss");
+
+    if (importBtn && fileInput) {
+        importBtn.addEventListener("click", () => fileInput.click());
+        fileInput.addEventListener("change", (e) => {
+            if (e.target.files[0]) handleFileImport(e.target.files[0]);
+            e.target.value = ""; // allow re-importing same file
+        });
+    }
+    if (dismissBtn) {
+        dismissBtn.addEventListener("click", loadAnalytics);
+    }
+}
+
+function initSplitArtists() {
+    const toggle = document.getElementById("splitArtistsToggle");
+    if (toggle) {
+        toggle.addEventListener("change", () => {
+            splitArtists = toggle.checked;
+            if (usingImported) loadImportedData(rawRatings);
+            else loadAnalytics();
+        });
+    }
+}
+
+// Wire the ⓘ info toggle
+document.addEventListener("DOMContentLoaded", () => {
+    const btn = document.getElementById("shrinkageInfoToggle");
+    const panel = document.getElementById("shrinkageInfo");
+    if (btn && panel) {
+        btn.addEventListener("click", () => panel.classList.toggle("hidden"));
+    }
 });
 
 // ─── Tabs ──────────────────────────────────────────────────────
@@ -94,18 +135,216 @@ function initShrinkage() {
 }
 
 // ─── Data Loading ──────────────────────────────────────────────
+let usingImported = false;
+
 async function loadAnalytics() {
     try {
         const [analytics, ratings] = await Promise.all([
-            fetch(`/api/analytics?c=${currentShrinkage}`).then((r) => r.json()),
-            fetch("/api/ratings").then((r) => r.json()),
+            fetch(`/api/analytics?c=${currentShrinkage}&splitArtists=${splitArtists ? 1 : 0}&_t=${Date.now()}`).then((r) => r.json()),
+            fetch("/api/ratings?limit=0").then((r) => r.json()),
         ]);
         analyticsData = analytics;
         rawRatings = ratings.ratings || [];
+        usingImported = false;
+        updateImportBanner();
         renderAll();
     } catch (e) {
         console.error("Failed to load analytics", e);
     }
+}
+
+function loadImportedData(ratings) {
+    // Build analytics-compatible structures from raw ratings
+    rawRatings = ratings;
+    usingImported = true;
+
+    const allScores = ratings
+        .filter(r => typeof r.rating === "number")
+        .map(r => r.rating);
+    const globalMean = allScores.length ? allScores.reduce((a, b) => a + b, 0) / allScores.length : 0;
+
+    // Build artist data
+    const artistMap = {};
+    const albumMap = {};
+    const decades = {};
+    const tags = {};
+
+    ratings.forEach(r => {
+        const rawArtist = r.artist || "Unknown";
+        const artistNames = splitArtists ? rawArtist.split(",").map(a => a.trim()).filter(Boolean) : [rawArtist];
+        const album = r.album || "Unknown";
+        const rating = r.rating;
+
+        // Artists — count for each credited artist
+        artistNames.forEach(artist => {
+            if (!artistMap[artist]) artistMap[artist] = { scores: [], albums: new Set() };
+            if (typeof rating === "number") artistMap[artist].scores.push(rating);
+            artistMap[artist].albums.add(album);
+        });
+
+        // Albums
+        if (!albumMap[album]) albumMap[album] = { scores: [], artist, year: r.year || "", albumArt: r.albumArt || "" };
+        if (typeof rating === "number") albumMap[album].scores.push(rating);
+
+        // Decades
+        const year = r.year;
+        if (year && String(year).match(/^\d+$/)) {
+            const dec = String(Math.floor(parseInt(year) / 10) * 10) + "s";
+            if (!decades[dec]) decades[dec] = { count: 0, totalRating: 0 };
+            decades[dec].count++;
+            if (typeof rating === "number") decades[dec].totalRating += rating;
+        }
+
+        // Tags
+        (r.tags || []).forEach(t => {
+            const tl = t.trim().toLowerCase();
+            if (tl) tags[tl] = (tags[tl] || 0) + 1;
+        });
+    });
+
+    // Build arrays
+    const artists = Object.entries(artistMap).map(([name, d]) => {
+        const n = d.scores.length;
+        if (n === 0) return null;
+        const total = d.scores.reduce((a, b) => a + b, 0);
+        const avg = total / n;
+        const adj = (n * avg + currentShrinkage * globalMean) / (n + currentShrinkage);
+        return {
+            name, appearances: n, totalScore: Math.round(total * 100) / 100,
+            avgScore: Math.round(avg * 1000) / 1000,
+            adjustedScore: Math.round(adj * 1000) / 1000,
+            albumCount: d.albums.size,
+            minRating: Math.min(...d.scores), maxRating: Math.max(...d.scores),
+        };
+    }).filter(Boolean);
+    artists.sort((a, b) => b.adjustedScore - a.adjustedScore);
+    artists.forEach((a, i) => a.rank = i + 1);
+
+    const albums = Object.entries(albumMap).map(([name, d]) => {
+        const n = d.scores.length;
+        if (n === 0) return null;
+        const total = d.scores.reduce((a, b) => a + b, 0);
+        const avg = total / n;
+        const adj = (n * avg + currentShrinkage * globalMean) / (n + currentShrinkage);
+        return {
+            name, artist: d.artist, year: d.year, albumArt: d.albumArt,
+            appearances: n, totalScore: Math.round(total * 100) / 100,
+            avgScore: Math.round(avg * 1000) / 1000,
+            adjustedScore: Math.round(adj * 1000) / 1000,
+            minRating: Math.min(...d.scores), maxRating: Math.max(...d.scores),
+        };
+    }).filter(Boolean);
+    albums.sort((a, b) => b.adjustedScore - a.adjustedScore);
+    albums.forEach((a, i) => a.rank = i + 1);
+
+    const decadesList = {};
+    Object.entries(decades).sort().forEach(([dec, d]) => {
+        decadesList[dec] = { count: d.count, avgRating: d.count ? Math.round(d.totalRating / d.count * 100) / 100 : 0 };
+    });
+
+    analyticsData = {
+        artists, albums, decades: decadesList, globalMean,
+        totalSongs: ratings.length, shrinkageC: currentShrinkage,
+    };
+
+    updateImportBanner();
+    renderAll();
+}
+
+function updateImportBanner() {
+    const banner = document.getElementById("importBanner");
+    if (!banner) return;
+    if (usingImported) {
+        banner.classList.remove("hidden");
+        banner.querySelector(".import-count").textContent = rawRatings.length;
+    } else {
+        banner.classList.add("hidden");
+    }
+}
+
+function handleFileImport(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const text = e.target.result;
+
+            if (file.name.endsWith(".json")) {
+                let data = JSON.parse(text);
+                // Support both raw array and { ratings: [...] } format
+                if (Array.isArray(data)) {
+                    loadImportedData(data);
+                } else if (data.ratings && Array.isArray(data.ratings)) {
+                    loadImportedData(data.ratings);
+                } else {
+                    toast("Invalid JSON: expected an array of ratings or { ratings: [...] }", "error");
+                    return;
+                }
+                toast(`Imported ${rawRatings.length} ratings from JSON`, "success");
+            } else if (file.name.endsWith(".csv")) {
+                const ratings = parseCSV(text);
+                if (!ratings.length) {
+                    toast("No valid data found in CSV", "error");
+                    return;
+                }
+                loadImportedData(ratings);
+                toast(`Imported ${ratings.length} ratings from CSV`, "success");
+            } else {
+                toast("Unsupported file type. Use .json or .csv", "error");
+            }
+        } catch (err) {
+            toast("Import failed: " + (err.message || err), "error");
+        }
+    };
+    reader.readAsText(file);
+}
+
+function parseCSV(text) {
+    const lines = text.trim().split("\n");
+    if (lines.length < 2) return [];
+
+    const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, "").toLowerCase());
+
+    // Map common header names
+    const fieldMap = {
+        title: ["title", "song", "track", "name"],
+        artist: ["artist", "artists", "performer"],
+        album: ["album"],
+        year: ["year", "release_year", "release year"],
+        rating: ["rating", "score", "rate"],
+        ratedAt: ["ratedat", "rated_at", "date", "timestamp"],
+        notes: ["notes", "note", "comment"],
+        tags: ["tags", "tag", "genre"],
+    };
+
+    function findField(header) {
+        for (const [field, aliases] of Object.entries(fieldMap)) {
+            if (aliases.includes(header)) return field;
+        }
+        return null;
+    }
+
+    const colMap = {};
+    headers.forEach((h, i) => {
+        const field = findField(h);
+        if (field) colMap[field] = i;
+    });
+
+    if (!colMap.hasOwnProperty("title") && !colMap.hasOwnProperty("artist")) {
+        return [];
+    }
+
+    return lines.slice(1).map(line => {
+        const cols = line.split(",").map(c => c.trim().replace(/^"|"$/g, ""));
+        const entry = {};
+        for (const [field, idx] of Object.entries(colMap)) {
+            let val = cols[idx] || "";
+            if (field === "rating") val = parseFloat(val) || 0;
+            else if (field === "year") val = val.replace(/[^\d]/g, "");
+            else if (field === "tags") val = val.split(";").map(t => t.trim()).filter(Boolean);
+            entry[field] = val;
+        }
+        return entry;
+    }).filter(r => r.title || r.artist);
 }
 
 function renderAll() {
@@ -124,13 +363,56 @@ function renderSummary() {
     document.getElementById("sumAlbums").textContent = analyticsData.albums.length;
 }
 
+// ─── Smart Search ──────────────────────────────────────────────
+// Supports: pipe OR (a|b), quotes ("exact"), negation (-term),
+// regex (/pattern/i), space-separated AND
+function smartMatch(query, ...fields) {
+    const text = fields.map(f => (f || "").toLowerCase()).join(" ");
+    if (!query) return true;
+
+    // Pipe = OR between groups
+    const orGroups = query.split("|").map(g => g.trim()).filter(Boolean);
+    return orGroups.some(group => {
+        // Tokenize: respect quoted strings, regex, and bare words
+        const tokens = [];
+        const re = /([!-]?)("([^"]*)"|\/(.*?)\/([i]?)|(\S+))/g;
+        let m;
+        while ((m = re.exec(group)) !== null) {
+            const negate = m[1] === "-" || m[1] === "!";
+            if (m[3] !== undefined) {
+                // Quoted exact phrase
+                tokens.push({ negate, type: "exact", value: m[3].toLowerCase() });
+            } else if (m[4] !== undefined) {
+                // Regex pattern
+                try {
+                    const flags = (m[5] || "") + (m[5]?.includes("i") ? "" : "i");
+                    tokens.push({ negate, type: "regex", value: new RegExp(m[4], flags) });
+                } catch { /* invalid regex — treat as literal */
+                    tokens.push({ negate, type: "exact", value: m[4].toLowerCase() });
+                }
+            } else {
+                // Bare word — substring match
+                tokens.push({ negate, type: "contains", value: m[6].toLowerCase() });
+            }
+        }
+        // AND: every token must match (or not-match if negated)
+        return tokens.every(tok => {
+            let hit;
+            if (tok.type === "regex") hit = tok.value.test(text);
+            else if (tok.type === "exact") hit = text.includes(tok.value);
+            else hit = text.includes(tok.value);
+            return tok.negate ? !hit : hit;
+        });
+    });
+}
+
 // ─── Artist Table ──────────────────────────────────────────────
 function renderArtistTable() {
-    const search = document.getElementById("artistSearch").value.toLowerCase();
+    const search = document.getElementById("artistSearch").value.trim();
     const minApp = parseInt(document.getElementById("artistMinAppearances").value) || 1;
 
     let data = analyticsData.artists.filter(
-        (a) => a.appearances >= minApp && (!search || a.name.toLowerCase().includes(search))
+        (a) => a.appearances >= minApp && smartMatch(search, a.name)
     );
 
     const tbody = document.getElementById("artistTableBody");
@@ -141,9 +423,9 @@ function renderArtistTable() {
 
     tbody.innerHTML = data
         .map(
-            (a) => `
-        <tr class="${tierClass(a.rank)}">
-            <td class="rank-cell rank-${a.rank}">${a.rank}</td>
+            (a, i) => `
+        <tr class="${tierClass(i + 1)}">
+            <td class="rank-cell rank-${i + 1}">${i + 1}</td>
             <td class="name-cell">${esc(a.name)}</td>
             <td class="score-cell">${a.appearances}</td>
             <td class="score-cell">${a.totalScore}</td>
@@ -158,13 +440,12 @@ function renderArtistTable() {
 }
 
 function renderAlbumTable() {
-    const search = document.getElementById("albumSearch").value.toLowerCase();
+    const search = document.getElementById("albumSearch").value.trim();
     const minTracks = parseInt(document.getElementById("albumMinTracks").value) || 1;
 
     let data = analyticsData.albums.filter(
         (a) =>
-            a.appearances >= minTracks &&
-            (!search || a.name.toLowerCase().includes(search) || (a.artist || "").toLowerCase().includes(search))
+            a.appearances >= minTracks && smartMatch(search, a.name, a.artist)
     );
 
     const tbody = document.getElementById("albumTableBody");
@@ -175,9 +456,9 @@ function renderAlbumTable() {
 
     tbody.innerHTML = data
         .map(
-            (a) => `
-        <tr class="${tierClass(a.rank)}">
-            <td class="rank-cell rank-${a.rank}">${a.rank}</td>
+            (a, i) => `
+        <tr class="${tierClass(i + 1)}">
+            <td class="rank-cell rank-${i + 1}">${i + 1}</td>
             <td><img class="album-art-thumb" src="${a.albumArt || ""}" alt="" onerror="this.style.display='none'"></td>
             <td class="name-cell">${esc(a.name)}</td>
             <td>${esc(a.artist)}</td>
@@ -310,6 +591,8 @@ function renderCharts() {
     renderTrendChart();
     renderArtistScatter();
     renderRadarChart();
+    renderCumulativeChart();
+    renderTagChart();
 }
 
 function getOrCreate(id, type, config) {
@@ -327,8 +610,18 @@ function renderDistributionChart() {
         const key = r.rating;
         dist[key] = (dist[key] || 0) + 1;
     });
-    const labels = Object.keys(dist).sort((a, b) => Number(a) - Number(b));
-    const values = labels.map((l) => dist[l]);
+
+    // Find the actual min and max ratings present in ALL data (not just filtered)
+    const allRatings = rawRatings.map(r => r.rating).filter(r => typeof r === 'number');
+    const dataMin = Math.min(...allRatings, ...Object.keys(dist).map(Number));
+    const dataMax = Math.max(...allRatings, ...Object.keys(dist).map(Number));
+
+    // Fill ALL integer steps between min and max so no gaps appear
+    const labels = [];
+    for (let i = dataMin; i <= dataMax; i++) {
+        labels.push(String(i));
+    }
+    const values = labels.map((l) => dist[Number(l)] || 0);
 
     getOrCreate("chartDistribution", "bar", {
         data: {
@@ -568,9 +861,13 @@ function renderArtistScatter() {
     if (!artists.length) return;
 
     // Color by avg score: red (low) -> yellow (mid) -> green (high)
-    const settings = { min: 0, max: 10 };
+    const allRatings = rawRatings.map(r => r.rating).filter(r => typeof r === 'number');
+    const rMax = allRatings.length ? Math.max(...allRatings) : 10;
+    const rMin = allRatings.length ? Math.min(...allRatings) : 0;
+
     function avgToColor(avg) {
-        const ratio = Math.max(0, Math.min(1, avg / settings.max));
+        const range = rMax - rMin || 1;
+        const ratio = Math.max(0, Math.min(1, (avg - rMin) / range));
         const hue = ratio * 120; // 0=red, 60=yellow, 120=green
         return `hsl(${hue}, 80%, 50%)`;
     }
@@ -590,7 +887,7 @@ function renderArtistScatter() {
                     data: data,
                     backgroundColor: data.map((d) => avgToColor(d.avg)),
                     borderColor: data.map((d) => avgToColor(d.avg)),
-                    pointRadius: data.map((d) => Math.min(4 + d.x * 1.5, 18)),
+                    pointRadius: 7,
                     pointHoverRadius: 10,
                 },
             ],
@@ -610,7 +907,7 @@ function renderArtistScatter() {
             },
             scales: {
                 x: { title: { display: true, text: "Songs Rated" }, beginAtZero: true },
-                y: { title: { display: true, text: "Total Score" }, beginAtZero: true },
+                y: { title: { display: true, text: "Total Score" } },
             },
         },
     });
@@ -816,6 +1113,147 @@ function generateCustomChart() {
             ],
         },
         options: opts,
+    });
+}
+
+// ─── Smart Custom Chart Validation ─────────────────────────────
+function initCustomValidation() {
+    const chartTypeEl = document.getElementById("customChartType");
+    const groupByEl = document.getElementById("customGroupBy");
+    const metricEl = document.getElementById("customMetric");
+
+    // When chart type changes, update available combos
+    chartTypeEl.addEventListener("change", updateCustomOptions);
+    groupByEl.addEventListener("change", updateCustomOptions);
+    updateCustomOptions();
+}
+
+function updateCustomOptions() {
+    const chartTypeEl = document.getElementById("customChartType");
+    const groupBy = document.getElementById("customGroupBy").value;
+    const metricEl = document.getElementById("customMetric");
+
+    // Scatter only makes sense with numeric group-by (year, rating)
+    // Line only makes sense with ordered axes (year, ratedMonth, rating)
+
+    const orderedGroups = ["year", "ratedMonth", "rating"];
+    const isOrdered = orderedGroups.includes(groupBy);
+
+    // Disable line chart when group-by is unordered (artist names, albums, tags)
+    const lineOpt = chartTypeEl.querySelector('option[value="line"]');
+    if (lineOpt) lineOpt.disabled = !isOrdered;
+
+    // Disable scatter when group-by is unordered
+    const scatterOpt = chartTypeEl.querySelector('option[value="scatter"]');
+    if (scatterOpt) scatterOpt.disabled = !isOrdered;
+
+    // If current chart type is now disabled, switch to bar
+    if (chartTypeEl.selectedOptions[0]?.disabled) {
+        chartTypeEl.value = "bar";
+    }
+
+    // Adjusted Score doesn't make sense when grouping by rating or ratedMonth
+    const adjOpt = metricEl.querySelector('option[value="adjustedScore"]');
+    if (adjOpt) adjOpt.disabled = ["rating", "ratedMonth"].includes(groupBy);
+
+    if (metricEl.selectedOptions[0]?.disabled) {
+        metricEl.value = "count";
+    }
+}
+
+// ─── New Charts: Cumulative + Tags ─────────────────────────────
+function renderCumulativeChart() {
+    if (!rawRatings.length) return;
+
+    const sorted = [...filterRatings(rawRatings)]
+        .filter((r) => r.ratedAt)
+        .sort((a, b) => a.ratedAt.localeCompare(b.ratedAt));
+
+    // Group by date
+    const byDate = {};
+    sorted.forEach((r) => {
+        const d = r.ratedAt.substring(0, 10);
+        byDate[d] = (byDate[d] || 0) + 1;
+    });
+
+    const dates = Object.keys(byDate).sort();
+    let cumulative = 0;
+    const cumData = dates.map(d => {
+        cumulative += byDate[d];
+        return cumulative;
+    });
+
+    getOrCreate("chartCumulative", "line", {
+        data: {
+            labels: dates,
+            datasets: [
+                {
+                    label: "Total Songs Rated",
+                    data: cumData,
+                    borderColor: COLORS[9],
+                    backgroundColor: COLORS[9] + "22",
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 3,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { beginAtZero: true, title: { display: true, text: "Total Songs" } },
+                x: { title: { display: true, text: "Date" } },
+            },
+        },
+    });
+}
+
+function renderTagChart() {
+    const filtered = filterRatings(rawRatings);
+    const tagCounts = {};
+    filtered.forEach((r) => {
+        if (r.tags && r.tags.length) {
+            r.tags.forEach((t) => {
+                tagCounts[t] = (tagCounts[t] || 0) + 1;
+            });
+        }
+    });
+
+    const sorted = Object.entries(tagCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 15);
+
+    if (!sorted.length) {
+        // Hide the chart if no tags
+        const canvas = document.getElementById("chartTags");
+        if (canvas) canvas.closest(".chart-card").style.display = "none";
+        return;
+    }
+
+    const canvas = document.getElementById("chartTags");
+    if (canvas) canvas.closest(".chart-card").style.display = "";
+
+    getOrCreate("chartTags", "doughnut", {
+        data: {
+            labels: sorted.map(([t]) => t),
+            datasets: [
+                {
+                    data: sorted.map(([, c]) => c),
+                    backgroundColor: sorted.map((_, i) => COLORS[i % COLORS.length]),
+                    borderWidth: 0,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: "right",
+                    labels: { boxWidth: 12, padding: 8, font: { size: 11 } },
+                },
+            },
+        },
     });
 }
 
