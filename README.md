@@ -6,7 +6,9 @@ Rate songs playing on YouTube Music in real time. See the artist, song title, al
 
 - **Real-time detection** — Detects what's playing on YouTube Music (phone or desktop)
 - **Rich metadata** — Album art, artist, album name, original release year
-- **Customizable rating scale** — Default 1–10, adjustable in settings
+- **Customizable rating scale** — Default -3 to 3, adjustable in settings
+- **Grid / List view toggle** — Switch between card grid and compact table view for rated and unrated songs
+- **Smart search** — Search with OR (`a | b`), negation (`-term`), exact phrases (`"exact"`), and regex (`/pattern/`)
 - **Related songs sidebar** — Dual search (title+artist and title-only) shows related versions
 - **Other Versions sidebar** — Scans the artist's albums to find the same song on different releases (single vs album, remaster, etc.)
 - **Song search** — Search YouTube Music directly and switch to any result
@@ -14,13 +16,11 @@ Rate songs playing on YouTube Music in real time. See the artist, song title, al
 - **Pause Polling toggle** — Checkbox to fully stop polling for as long as needed
 - **Anti-flicker protection** — Remembers recent songs to prevent "Now Playing" from reverting (buffer size configurable in settings)
 - **Unrated songs tracker** — Songs you skip are saved automatically; bulk dismiss with "Dismiss All"
-- **Songs25.csv checker** — Fuzzy-matches the current song against a CSV file, prints matches in the server console, and auto-removes matched rows
 - **Duplicate detection** — Alerts you if a song was already rated
 - **Edit & delete** — Modify song info or ratings anytime
-- **Search, filter, sort** — Find songs instantly in the rated songs list
-- **Export** — CSV and JSON export for data analysis
+- **Export** — CSV (with album art URLs) and JSON export for data analysis
 - **Summary stats** — Average rating, top artist, rating distribution
-- **Analytics page** — Detailed charts and statistics at `/analytics`
+- **Analytics page** — Detailed charts, Bayesian-adjusted artist rankings, data import, and smart search at `/analytics`
 - **Phone access** — Use on your phone via local network or Cloudflare Tunnel
 - **PWA** — Install as an app on your phone's home screen
 
@@ -69,11 +69,31 @@ Double-click **`Start SongRate.bat`** in the project folder. This will:
 1. Kill any stale server/tunnel processes
 2. Start the Flask server
 3. Start a Cloudflare Tunnel for remote access
-4. Copy the public URL to your clipboard
+4. **Auto-open** the app in your default browser
+5. Display all access URLs (local, LAN, and public tunnel)
+6. Copy the public URL to your clipboard
 
 Open the URL on your phone and add it to your home screen for quick access.
 
-> **Note:** For local network access (same Wi-Fi), the server also prints a `Network:` URL you can use without the tunnel.
+### 4. Setting Up Cloudflare Tunnel (for phone access outside your network)
+
+The `Start SongRate.bat` launcher uses **Cloudflare Tunnel** to make SongRate accessible from any network (cellular, other Wi-Fi, etc.) without port forwarding.
+
+1. **Download cloudflared:**
+   - Go to https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+   - Download the **Windows 64-bit** `.msi` installer
+   - Run the installer — it installs to `C:\Program Files (x86)\cloudflared\`
+
+2. **Verify installation:**
+   ```bash
+   cloudflared --version
+   ```
+
+3. **That's it** — no account, no configuration needed. The `start.ps1` script uses Cloudflare's free "Quick Tunnel" feature, which generates a temporary public URL each time you launch.
+
+> **Note:** The tunnel URL changes every time you restart. Just copy the new one from the console output.
+
+> **Note:** If `cloudflared` is installed in a non-default location, edit the `$CF` path at the top of `start.ps1`.
 
 ## How It Works
 
@@ -81,6 +101,28 @@ Open the URL on your phone and add it to your home screen for quick access.
 2. It appears in SongRate within ~5 seconds
 3. Rate it with the slider and click "Rate This Song"
 4. If you skip it, it's saved to "Unrated Songs" so you can rate it later
+
+### View Modes
+
+Toggle between two views using the ☰ button next to the sort dropdown:
+
+- **Grid view** — Multi-column cards with album art thumbnails
+- **List view** — Compact table with aligned columns (Title, Artist, Album, Year, Rating, Tags)
+
+Your preference is saved across sessions.
+
+### Smart Search
+
+Both the rated and unrated search bars support advanced syntax:
+
+| Syntax | Example | Meaning |
+|--------|---------|---------|
+| `word` | `radiohead` | Substring match |
+| `a b` | `radiohead rainbows` | AND — both must match |
+| `a \| b` | `radiohead \| guster` | OR — either matches |
+| `-term` | `radiohead -creep` | Exclude term |
+| `"exact"` | `"in rainbows"` | Exact phrase |
+| `/regex/` | `/^the .*/` | Regex pattern |
 
 ### Sidebars
 
@@ -97,15 +139,6 @@ Songs you play but don't rate are automatically saved to the **Unrated Songs** s
 - **Rate** — Click to open a rating modal
 - **Dismiss** — Remove individual songs
 - **Dismiss All** — Clear the entire unrated list
-
-### Songs25.csv Checker
-
-If a `Songs25.csv` file exists in the project root, the server will fuzzy-match the currently playing song against it. On match:
-- The full CSV row is printed in **green** in the server console
-- The row is **deleted** from the CSV
-- If no match, a gray "no match" message is printed (once per song)
-
-Matching uses 85% similarity on the concatenated `"artist - title"` string, with parenthesized content stripped (e.g. "(Remastered)" is ignored).
 
 ### Phone Access
 
@@ -139,6 +172,7 @@ Ratings are stored in `data/ratings.json`. Unrated songs are in `data/unrated.js
 | `artist` | Artist name(s) |
 | `album` | Album name |
 | `year` | Original release year |
+| `albumArt` | Album art URL |
 | `rating` | Numeric rating |
 | `ratedAt` | ISO timestamp |
 | `tags` | User-defined tags |
@@ -149,6 +183,8 @@ Ratings are stored in `data/ratings.json`. Unrated songs are in `data/unrated.js
 - **CSV**: Click the CSV button in the header, or `GET /api/export/csv`
 - **JSON**: Click the JSON button, or `GET /api/export/json`
 
+Both formats include album art URLs.
+
 ## API
 
 | Endpoint | Method | Description |
@@ -156,7 +192,8 @@ Ratings are stored in `data/ratings.json`. Unrated songs are in `data/unrated.js
 | `/api/now-playing` | GET | Currently playing track |
 | `/api/search` | GET | Search YouTube Music (`?q=`) |
 | `/api/find-versions` | GET | Scan artist albums for other versions (`?title=&artist=&videoId=`) |
-| `/api/ratings` | GET | Ratings with pagination (`?sort_by=`, `?min_rating=`, `?artist=`, `?limit=`, `?offset=`) |
+| `/api/album-tracks` | GET | Get all tracks on an album (`?albumId=`) |
+| `/api/ratings` | GET | Ratings with smart search & pagination (`?search=`, `?sort_by=`, `?min_rating=`, `?artist=`, `?limit=`, `?offset=`) |
 | `/api/ratings` | POST | Add a rating |
 | `/api/ratings/<id>` | PUT | Edit a rating |
 | `/api/ratings/<id>` | DELETE | Delete a rating |
@@ -165,6 +202,7 @@ Ratings are stored in `data/ratings.json`. Unrated songs are in `data/unrated.js
 | `/api/unrated/<id>` | DELETE | Dismiss an unrated song |
 | `/api/unrated/all` | DELETE | Dismiss all unrated songs |
 | `/api/unrated/<id>/rate` | POST | Rate an unrated song (moves to rated) |
+| `/api/analytics` | GET | Aggregated artist stats with Bayesian scoring |
 | `/api/settings` | GET | Current settings |
 | `/api/settings` | POST | Update settings |
 | `/api/enrich/<albumId>` | GET | Fetch original album release year |
@@ -177,12 +215,12 @@ Ratings are stored in `data/ratings.json`. Unrated songs are in `data/unrated.js
 Antigravity/
 ├── server.py              # Flask backend + YouTube Music API
 ├── setup.py               # One-time setup wizard
-├── start.ps1              # PowerShell: server + tunnel (kills stale processes)
+├── start.ps1              # PowerShell: server + tunnel + browser launch
 ├── killServer.ps1         # Kill server + all cloudflared processes
 ├── killServer.bat         # Double-click to kill everything
 ├── Start SongRate.bat     # Double-click launcher
-├── Songs25.csv            # Optional: song list for auto-matching
 ├── browser.json           # Auth credentials (gitignored)
+├── config.json            # App config
 ├── data/
 │   ├── ratings.json       # Saved ratings
 │   ├── unrated.json       # Skipped/unrated songs
@@ -204,8 +242,12 @@ Antigravity/
 | Issue | Fix |
 |-------|-----|
 | "YTMusic not authenticated" | Run `py setup.py` again |
+| "Error fetching history: None" | Auth token expired — run `py setup.py` to re-authenticate |
 | Phone can't connect (local) | Allow Python through Windows Firewall when prompted |
 | Cloudflare tunnel URL not detected | Check `tunnel.log` in the project folder |
+| `cloudflared` not found | Install from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/ |
 | Songs not appearing | Make sure YouTube Music is playing and auth is valid |
 | Old tunnel URLs still working | Run `killServer.bat` to kill all stale cloudflared processes |
 | "Now Playing" reverts to old songs | Increase the anti-flicker buffer size in Settings |
+| Thumbnails missing in rated songs | Google CDN rate-limits bulk requests; thumbnails auto-retry after 1 second |
+| Service worker cache errors | Unregister the old service worker in DevTools → Application → Service Workers |

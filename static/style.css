@@ -898,6 +898,130 @@ body::before {
     font-size: 15px;
 }
 
+/* ─── View Toggle Button ─────────────────────────────────── */
+.btn-view-toggle {
+    background: var(--bg-glass);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    font-size: 16px;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition);
+    margin-left: 8px;
+    line-height: 1;
+}
+
+.btn-view-toggle:hover {
+    color: var(--text-accent);
+    border-color: var(--border-glass);
+}
+
+.btn-view-toggle.active {
+    color: var(--text-accent);
+    background: rgba(139, 92, 246, 0.15);
+    border-color: var(--text-accent);
+}
+
+/* ─── List View (Table Mode) ─────────────────────────────── */
+.rated-grid.list-view {
+    display: block;
+}
+
+.ratings-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.ratings-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+.ratings-table th {
+    background: var(--bg-elevated, #1e1b2e);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 10px 12px;
+    text-align: left;
+    white-space: nowrap;
+    user-select: none;
+    border-bottom: 2px solid var(--border-subtle);
+}
+
+.ratings-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.ratings-table-row {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.ratings-table-row:hover {
+    background: rgba(99, 102, 241, 0.06);
+}
+
+.table-art {
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    object-fit: cover;
+    vertical-align: middle;
+}
+
+.table-title {
+    font-weight: 600;
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.table-artist {
+    color: var(--text-accent);
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.table-album {
+    color: var(--text-muted);
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.table-year {
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.table-rating {
+    font-weight: 900;
+    font-size: 16px;
+    text-align: center;
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.table-tags {
+    color: var(--text-muted);
+    font-size: 11px;
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* ─── Modal ─────────────────────────────────────────────────── */
 .modal-overlay {
     position: fixed;

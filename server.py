@@ -85,9 +85,10 @@ def _load_ratings():
 def _save_ratings(ratings=None):
     """Mark cache dirty and flush to disk atomically (write-tmp + rename)."""
     global _ratings_cache, _ratings_dirty
-    if ratings is not None:
-        _ratings_cache = ratings
-    _ratings_dirty = True
+    with _ratings_lock:
+        if ratings is not None:
+            _ratings_cache = ratings
+        _ratings_dirty = True
     _flush_ratings()
 
 def _flush_ratings():
@@ -176,7 +177,7 @@ def _get_cached_history():
         _history_cache["timestamp"] = now
         return history
     except Exception as e:
-        print(f"Error fetching history: {e}")
+        print(f"Error fetching history: {type(e).__name__}: {e!r}")
         return None
 
 
@@ -235,11 +236,12 @@ def _extract_track_info(track):
     # Use cached album year if available
     year = _album_cache.get(album_id, "") if album_id else ""
 
-    # Check ratings and unrated lists for this song
+    # Check ratings and unrated lists for this song (use dict for O(1) lookup)
     ratings = _load_ratings()
     existing = next((r for r in ratings if r.get("videoId") == video_id), None)
     unrated = _load_unrated()
-    already_unrated = any(u.get("videoId") == video_id for u in unrated)
+    unrated_ids = {u.get("videoId") for u in unrated}
+    already_unrated = video_id in unrated_ids
 
     return {
         "videoId": video_id,
@@ -623,77 +625,8 @@ def now_playing():
 
     track_info = _extract_track_info(history[0])
 
-    # Check Songs25.csv for matching artist+title
-    _check_and_remove_from_csv(track_info.get("artist", ""), track_info.get("title", ""))
-
     return jsonify({"track": track_info})
 
-
-# Track last checked song to avoid spamming "no match" on every poll
-_last_csv_check = {"artist": "", "title": ""}
-
-
-def _fuzzy_match(a, b):
-    """Return similarity ratio between two strings (0.0 to 1.0)."""
-    from difflib import SequenceMatcher
-    return SequenceMatcher(None, a, b).ratio()
-
-
-def _check_and_remove_from_csv(artist, title):
-    """Check if artist+title exists in Songs25.csv using fuzzy matching. If found, print in green and delete the row."""
-    global _last_csv_check
-    csv_path = os.path.join(os.path.dirname(__file__), "Songs25.csv")
-    if not os.path.exists(csv_path):
-        return
-
-    artist_lower = artist.lower().strip()
-    title_lower = title.lower().strip()
-    if not artist_lower or not title_lower:
-        return
-
-    # Don't re-check the same song on every poll
-    if _last_csv_check["artist"] == artist_lower and _last_csv_check["title"] == title_lower:
-        return
-    _last_csv_check = {"artist": artist_lower, "title": title_lower}
-
-    MATCH_THRESHOLD = 0.85
-
-    try:
-        with open(csv_path, "r", encoding="utf-8") as f:
-            reader = csv.reader(f)
-            rows = list(reader)
-        import re
-        def _strip_parens(s):
-            return re.sub(r"\s*\([^)]*\)", "", s).strip()
-
-        now_str = _strip_parens(f"{artist_lower} - {title_lower}")
-        found_idx = None
-        best_score = 0
-        for i, row in enumerate(rows[1:], start=1):
-            csv_artist = row[0].strip().lower() if len(row) > 0 else ""
-            csv_song = row[2].strip().lower() if len(row) > 2 else ""
-            csv_str = _strip_parens(f"{csv_artist} - {csv_song}")
-
-            score = _fuzzy_match(csv_str, now_str)
-            if score >= MATCH_THRESHOLD and score > best_score:
-                best_score = score
-                found_idx = i
-
-        if found_idx is not None:
-            matched_row = rows[found_idx]
-            row_str = ", ".join(matched_row)
-            print(f"\033[92m[Songs25 MATCH] {row_str}\033[0m")
-
-            # Delete the row
-            rows.pop(found_idx)
-            with open(csv_path, "w", encoding="utf-8", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerows(rows)
-            print(f"\033[93m[Songs25] Row deleted. {len(rows) - 1} songs remaining.\033[0m")
-        else:
-            print(f"\033[90m[Songs25] No match for: {artist} - {title}\033[0m")
-    except Exception as e:
-        print(f"\033[91m[Songs25 ERROR] {e}\033[0m")
 
 
 @app.route("/api/search")
@@ -739,6 +672,7 @@ def api_find_versions():
         album_results = ytmusic.search(artist, filter="albums", limit=15)
         versions = []
         seen_video_ids = {current_video_id} if current_video_id else set()
+        ratings = _load_ratings()  # Load once for all version checks
 
         for album_item in album_results:
             browse_id = album_item.get("browseId")
@@ -770,8 +704,7 @@ def api_find_versions():
                 if track_title == title_lower and video_id and video_id not in seen_video_ids:
                     seen_video_ids.add(video_id)
 
-                    # Check rated status
-                    ratings = _load_ratings()
+                    # Check rated status (ratings loaded once above)
                     already_rated = False
                     existing_rating = None
                     for r in ratings:
@@ -853,6 +786,41 @@ def enrich_album(album_id):
     return jsonify({"year": year})
 
 
+def _smart_match(query, *fields):
+    """Smart search: supports OR (|), negation (- or !), exact phrases ("..."), regex (/.../), implicit AND."""
+    text = " ".join((f or "").lower() for f in fields)
+    if not query:
+        return True
+
+    or_groups = [g.strip() for g in query.split("|") if g.strip()]
+    for group in or_groups:
+        # Tokenize: quoted strings, regex, bare words
+        tokens = []
+        import re as _re
+        for m in _re.finditer(r'([!\-]?)(?:"([^"]*)"|/([^/]*)/(i?)|(\S+))', group):
+            negate = m.group(1) in ("-", "!")
+            if m.group(2) is not None:
+                tokens.append({"negate": negate, "type": "exact", "value": m.group(2).lower()})
+            elif m.group(3) is not None:
+                try:
+                    flags = _re.IGNORECASE
+                    tokens.append({"negate": negate, "type": "regex", "value": _re.compile(m.group(3), flags)})
+                except _re.error:
+                    tokens.append({"negate": negate, "type": "exact", "value": m.group(3).lower()})
+            else:
+                tokens.append({"negate": negate, "type": "contains", "value": m.group(5).lower()})
+
+        if all(
+            (not tok["negate"]) == (
+                tok["value"].search(text) is not None if tok["type"] == "regex"
+                else tok["value"] in text
+            )
+            for tok in tokens
+        ):
+            return True
+    return False
+
+
 @app.route("/api/ratings", methods=["GET"])
 def get_ratings():
     """Return ratings with pagination. Supports filtering, sorting, search."""
@@ -862,7 +830,7 @@ def get_ratings():
     artist = request.args.get("artist", "").lower()
     min_rating = request.args.get("min_rating", type=int)
     max_rating = request.args.get("max_rating", type=int)
-    search = request.args.get("search", "").lower()
+    search = request.args.get("search", "").strip()
     sort_by = request.args.get("sort_by", "ratedAt")
     sort_order = request.args.get("sort_order", "desc")
     limit = request.args.get("limit", 50, type=int)
@@ -878,12 +846,14 @@ def get_ratings():
     if max_rating is not None:
         filtered = [r for r in filtered if r.get("rating", 0) <= max_rating]
     if search:
-        filtered = [r for r in filtered if (
-            search in r.get("title", "").lower() or
-            search in r.get("artist", "").lower() or
-            search in r.get("album", "").lower() or
-            search in r.get("notes", "").lower() or
-            any(search in t.lower() for t in r.get("tags", []))
+        tags_str = lambda r: " ".join(r.get("tags", []))
+        filtered = [r for r in filtered if _smart_match(
+            search,
+            r.get("title", ""),
+            r.get("artist", ""),
+            r.get("album", ""),
+            r.get("notes", ""),
+            tags_str(r),
         )]
 
     # Sort the copy
@@ -1123,7 +1093,7 @@ def export_csv():
     output = io.StringIO()
     if ratings:
         fieldnames = ["id", "videoId", "title", "artist", "album", "year",
-                       "rating", "ratedAt", "updatedAt", "tags", "notes"]
+                       "albumArt", "rating", "ratedAt", "updatedAt", "tags", "notes"]
         writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for r in ratings:

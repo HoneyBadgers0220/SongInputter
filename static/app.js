@@ -227,6 +227,66 @@ function bindEvents() {
     dom.searchSongInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") doSongSearch();
     });
+    // View toggle (grid ↔ list)
+    const viewToggle1 = document.getElementById("viewToggle");
+    const viewToggle2 = document.getElementById("viewToggle2");
+    function applyViewMode(isList) {
+        dom.ratedGrid.classList.toggle("list-view", isList);
+        dom.unratedGrid.classList.toggle("list-view", isList);
+        [viewToggle1, viewToggle2].forEach(btn => {
+            if (!btn) return;
+            btn.classList.toggle("active", isList);
+            btn.textContent = isList ? "▦" : "☰";
+        });
+        localStorage.setItem("songrate-list-view", isList ? "1" : "0");
+        // Re-render to switch between card and table HTML
+        renderRatedSongs();
+        renderUnratedSongs();
+    }
+    // Restore saved preference
+    applyViewMode(localStorage.getItem("songrate-list-view") === "1");
+    [viewToggle1, viewToggle2].forEach(btn => {
+        if (!btn) return;
+        btn.addEventListener("click", () => {
+            applyViewMode(!dom.ratedGrid.classList.contains("list-view"));
+        });
+    });
+}
+
+// ─── Smart Search ──────────────────────────────────────────────
+// Supports: pipe OR (a|b), quotes ("exact"), negation (-term),
+// regex (/pattern/i), space-separated AND
+function smartMatch(query, ...fields) {
+    const text = fields.map(f => (f || "").toLowerCase()).join(" ");
+    if (!query) return true;
+
+    const orGroups = query.split("|").map(g => g.trim()).filter(Boolean);
+    return orGroups.some(group => {
+        const tokens = [];
+        const re = /([!-]?)("([^"]*)"|\/(.*?)\/([i]?)|(\S+))/g;
+        let m;
+        while ((m = re.exec(group)) !== null) {
+            const negate = m[1] === "-" || m[1] === "!";
+            if (m[3] !== undefined) {
+                tokens.push({ negate, type: "exact", value: m[3].toLowerCase() });
+            } else if (m[4] !== undefined) {
+                try {
+                    const flags = (m[5] || "") + (m[5]?.includes("i") ? "" : "i");
+                    tokens.push({ negate, type: "regex", value: new RegExp(m[4], flags) });
+                } catch {
+                    tokens.push({ negate, type: "exact", value: m[4].toLowerCase() });
+                }
+            } else {
+                tokens.push({ negate, type: "contains", value: m[6].toLowerCase() });
+            }
+        }
+        return tokens.every(tok => {
+            let hit;
+            if (tok.type === "regex") hit = tok.value.test(text);
+            else hit = text.includes(tok.value);
+            return tok.negate ? !hit : hit;
+        });
+    });
 }
 
 // ─── Helpers ───────────────────────────────────────────────────
@@ -243,7 +303,16 @@ async function api(url, options = {}) {
             headers: { "Content-Type": "application/json" },
             ...options,
         });
-        return await res.json();
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+            console.error(`API non-JSON response: ${url} (${res.status})`);
+            return null;
+        }
+        const data = await res.json();
+        if (!res.ok) {
+            console.error(`API ${res.status}: ${url}`, data);
+        }
+        return data;
     } catch (err) {
         console.error(`API error: ${url}`, err);
         return null;
@@ -516,6 +585,7 @@ function showEmptyState() {
 }
 
 function showTrackCard(track, animate) {
+    if (!dom.npAlbumArt || !dom.npTitle) return; // DOM not ready
     dom.nowPlayingEmpty.classList.add("hidden");
     dom.npLayout.classList.remove("hidden");
 
@@ -666,21 +736,57 @@ function renderRatedSongs() {
     }
 
     dom.ratedEmpty.classList.add("hidden");
-    dom.ratedGrid.innerHTML = allRatings
-        .map(
-            (r) => `
-        <div class="rated-card" data-id="${r.id}" onclick="openEditModal(getRatingById('${r.id}'))">
-            <img class="rated-card-art" src="${r.albumArt || ""}" alt="${esc(r.title)}" onerror="this.style.display='none'">
-            <div class="rated-card-info">
-                <div class="rated-card-title">${esc(r.title)}</div>
-                <div class="rated-card-artist">${esc(r.artist)}</div>
-                <div class="rated-card-meta">${esc(r.album)}${r.year ? " · " + r.year : ""}${r.tags && r.tags.length ? " · " + r.tags.map(t => "#" + t).join(" ") : ""}</div>
+    const isList = dom.ratedGrid.classList.contains("list-view");
+
+    if (isList) {
+        dom.ratedGrid.innerHTML = `
+        <div class="table-wrap">
+        <table class="ratings-table">
+            <thead><tr>
+                <th></th>
+                <th>Title</th>
+                <th>Artist</th>
+                <th>Album</th>
+                <th>Year</th>
+                <th>Rating</th>
+                <th>Tags</th>
+            </tr></thead>
+            <tbody>
+            ${allRatings.map(r => `
+                <tr class="ratings-table-row" data-id="${r.id}" onclick="openEditModal(getRatingById('${r.id}'))">
+                    <td><img class="table-art" src="${r.albumArt || ""}" alt="" loading="lazy"
+                        data-retries="0" data-vid="${r.videoId || ""}"
+                        onerror="let n=+this.dataset.retries;if(n===0){this.dataset.retries=1;let s=this;setTimeout(()=>{s.src=s.src},1000)}else if(n===1&&this.dataset.vid){this.dataset.retries=2;this.src='https://i.ytimg.com/vi/'+this.dataset.vid+'/hqdefault.jpg'}else{this.style.display='none'}"></td>
+                    <td class="table-title">${esc(r.title)}</td>
+                    <td class="table-artist">${esc(r.artist)}</td>
+                    <td class="table-album">${esc(r.album)}</td>
+                    <td class="table-year">${r.year || ""}</td>
+                    <td class="table-rating">${r.rating}</td>
+                    <td class="table-tags">${r.tags && r.tags.length ? r.tags.map(t => "#" + t).join(" ") : ""}</td>
+                </tr>
+            `).join("")}
+            </tbody>
+        </table>
+        </div>`;
+    } else {
+        dom.ratedGrid.innerHTML = allRatings
+            .map(
+                (r) => `
+            <div class="rated-card" data-id="${r.id}" onclick="openEditModal(getRatingById('${r.id}'))">
+                <img class="rated-card-art" src="${r.albumArt || ""}" alt="${esc(r.title)}" loading="lazy"
+                     data-retries="0" data-vid="${r.videoId || ""}"
+                     onerror="let n=+this.dataset.retries;if(n===0){this.dataset.retries=1;let s=this;setTimeout(()=>{s.src=s.src},1000)}else if(n===1&&this.dataset.vid){this.dataset.retries=2;this.src='https://i.ytimg.com/vi/'+this.dataset.vid+'/hqdefault.jpg'}else{this.style.display='none'}">
+                <div class="rated-card-info">
+                    <div class="rated-card-title">${esc(r.title)}</div>
+                    <div class="rated-card-artist">${esc(r.artist)}</div>
+                    <div class="rated-card-meta">${esc(r.album)}${r.year ? " · " + r.year : ""}${r.tags && r.tags.length ? " · " + r.tags.map(t => "#" + t).join(" ") : ""}</div>
+                </div>
+                <div class="rated-card-rating">${r.rating}</div>
             </div>
-            <div class="rated-card-rating">${r.rating}</div>
-        </div>
-    `
-        )
-        .join("");
+        `
+            )
+            .join("");
+    }
 
     // Update count & Load More button
     dom.ratedCount.textContent = `Showing ${allRatings.length} of ${totalFiltered}`;
@@ -701,15 +807,11 @@ async function loadUnrated() {
 }
 
 function renderUnratedSongs() {
-    const search = dom.unratedSearchInput.value.toLowerCase();
+    const search = dom.unratedSearchInput.value.trim();
 
     let filtered = allUnrated.filter((u) => {
         if (!search) return true;
-        return (
-            (u.title || "").toLowerCase().includes(search) ||
-            (u.artist || "").toLowerCase().includes(search) ||
-            (u.album || "").toLowerCase().includes(search)
-        );
+        return smartMatch(search, u.title, u.artist, u.album);
     });
 
     // Sort newest first
@@ -726,21 +828,51 @@ function renderUnratedSongs() {
     }
 
     dom.unratedEmpty.classList.add("hidden");
-    dom.unratedGrid.innerHTML = filtered
-        .map(
-            (u) => `
-        <div class="rated-card" data-id="${u.id}" onclick="openRateUnratedModal('${u.id}')">
-            <img class="rated-card-art" src="${u.albumArt || ""}" alt="${esc(u.title)}" onerror="this.style.display='none'">
-            <div class="rated-card-info">
-                <div class="rated-card-title">${esc(u.title)}</div>
-                <div class="rated-card-artist">${esc(u.artist)}</div>
-                <div class="rated-card-meta">${esc(u.album)}${u.year ? " · " + u.year : ""}</div>
+    const isList = dom.unratedGrid.classList.contains("list-view");
+
+    if (isList) {
+        dom.unratedGrid.innerHTML = `
+        <div class="table-wrap">
+        <table class="ratings-table">
+            <thead><tr>
+                <th></th>
+                <th>Title</th>
+                <th>Artist</th>
+                <th>Album</th>
+                <th>Year</th>
+                <th></th>
+            </tr></thead>
+            <tbody>
+            ${filtered.map(u => `
+                <tr class="ratings-table-row" data-id="${u.id}" onclick="openRateUnratedModal('${u.id}')">
+                    <td><img class="table-art" src="${u.albumArt || ""}" alt="" loading="lazy" onerror="this.style.display='none'"></td>
+                    <td class="table-title">${esc(u.title)}</td>
+                    <td class="table-artist">${esc(u.artist)}</td>
+                    <td class="table-album">${esc(u.album)}</td>
+                    <td class="table-year">${u.year || ""}</td>
+                    <td><span class="rated-card-unrated-badge">UNRATED</span></td>
+                </tr>
+            `).join("")}
+            </tbody>
+        </table>
+        </div>`;
+    } else {
+        dom.unratedGrid.innerHTML = filtered
+            .map(
+                (u) => `
+            <div class="rated-card" data-id="${u.id}" onclick="openRateUnratedModal('${u.id}')">
+                <img class="rated-card-art" src="${u.albumArt || ""}" alt="${esc(u.title)}" onerror="this.style.display='none'">
+                <div class="rated-card-info">
+                    <div class="rated-card-title">${esc(u.title)}</div>
+                    <div class="rated-card-artist">${esc(u.artist)}</div>
+                    <div class="rated-card-meta">${esc(u.album)}${u.year ? " · " + u.year : ""}</div>
+                </div>
+                <div class="rated-card-unrated-badge">UNRATED</div>
             </div>
-            <div class="rated-card-unrated-badge">UNRATED</div>
-        </div>
-    `
-        )
-        .join("");
+        `
+            )
+            .join("");
+    }
 }
 
 window.getUnratedById = function (id) {
@@ -902,7 +1034,13 @@ async function deleteRating() {
         toast("Rating deleted", "success");
         closeEditModal();
         loadRatings();
-        pollNowPlaying();
+        // Reset the now-playing card so the song shows as unrated again
+        if (currentTrack) {
+            currentTrack.alreadyRated = false;
+            currentTrack.existingRating = null;
+            showTrackCard(currentTrack, false);
+        }
+        pausePolling();
     } else {
         toast(result?.error || "Failed to delete", "error");
     }
@@ -961,7 +1099,7 @@ async function doSongSearch() {
         dom.searchResults.innerHTML = results.map((track) => {
             const rated = track.alreadyRated;
             const badge = rated
-                ? `<span class="search-result-badge rated">Rated ${track.existingRating.rating}</span>`
+                ? `<span class="search-result-badge rated">Rated ${track.existingRating?.rating ?? "?"}</span>`
                 : "";
             return `
                 <div class="search-result-item${rated ? " already-rated" : ""}" data-vid="${track.videoId}">

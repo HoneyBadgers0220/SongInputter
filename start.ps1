@@ -62,8 +62,15 @@ else {
 Write-Host ""
 Write-Host "[3/3] Ready!" -ForegroundColor Green
 Write-Host ""
+
+# Get LAN IP
+$lanIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notmatch "Loopback" -and $_.IPAddress -ne "127.0.0.1" } | Select-Object -First 1).IPAddress
+
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host "  Local:   http://localhost:5000" -ForegroundColor White
+if ($lanIp) {
+    Write-Host "  LAN:     http://${lanIp}:5000" -ForegroundColor White
+}
 if ($publicUrl) {
     Write-Host "  Public:  $publicUrl" -ForegroundColor Green
     Set-Clipboard -Value $publicUrl
@@ -73,6 +80,10 @@ if ($publicUrl) {
 }
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host ""
+
+# Open browser
+Start-Process "http://localhost:5000"
+
 Write-Host "Press Ctrl+C or close this window to stop." -ForegroundColor DarkGray
 Write-Host ""
 
