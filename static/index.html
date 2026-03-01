@@ -494,6 +494,67 @@
                     </select>
                     <p class="form-hint">Show album tracklist or search-based related songs in the sidebar</p>
                 </div>
+
+                <!-- Color Palette -->
+                <div class="settings-group" style="margin-top:24px">
+                    <label class="settings-label">Color Palette</label>
+                    <div class="palette-presets" id="palettePresets">
+                        <button class="palette-swatch active" data-palette="default" title="Default (Violet)">
+                            <span style="background:#8b5cf6"></span>
+                            <span style="background:#0a0a0f"></span>
+                        </button>
+                        <button class="palette-swatch" data-palette="midnight" title="Midnight Blue">
+                            <span style="background:#3b82f6"></span>
+                            <span style="background:#070b14"></span>
+                        </button>
+                        <button class="palette-swatch" data-palette="emerald" title="Emerald">
+                            <span style="background:#10b981"></span>
+                            <span style="background:#060f0b"></span>
+                        </button>
+                        <button class="palette-swatch" data-palette="rose" title="Rose">
+                            <span style="background:#f43f5e"></span>
+                            <span style="background:#0f0608"></span>
+                        </button>
+                        <button class="palette-swatch" data-palette="amber" title="Amber">
+                            <span style="background:#f59e0b"></span>
+                            <span style="background:#0f0c06"></span>
+                        </button>
+                        <button class="palette-swatch" data-palette="mono" title="Monochrome">
+                            <span style="background:#a1a1aa"></span>
+                            <span style="background:#09090b"></span>
+                        </button>
+                        <button class="palette-swatch" data-palette="light" title="Light">
+                            <span style="background:#7c3aed"></span>
+                            <span style="background:#f8f8fc"></span>
+                        </button>
+                        <button class="palette-swatch" data-palette="lightBlue" title="Light Blue">
+                            <span style="background:#2563eb"></span>
+                            <span style="background:#f0f4ff"></span>
+                        </button>
+                        <button class="palette-swatch" data-palette="highContrast" title="High Contrast">
+                            <span style="background:#facc15"></span>
+                            <span style="background:#000000"></span>
+                        </button>
+                        <button class="palette-swatch" data-palette="custom" title="Custom">
+                            <span style="background:conic-gradient(red,yellow,lime,aqua,blue,magenta,red)"></span>
+                            <span style="background:#111"></span>
+                        </button>
+                    </div>
+                    <div class="custom-palette-options hidden" id="customPaletteOptions">
+                        <div class="custom-color-row">
+                            <label>Accent</label>
+                            <input type="color" id="customAccent" value="#8b5cf6">
+                        </div>
+                        <div class="custom-color-row">
+                            <label>Background</label>
+                            <input type="color" id="customBg" value="#0a0a0f">
+                        </div>
+                        <div class="custom-color-row">
+                            <label>Surface</label>
+                            <input type="color" id="customSurface" value="#12121a">
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn-primary" id="settingsSave">Save Settings</button>

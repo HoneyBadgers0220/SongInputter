@@ -105,9 +105,9 @@
         <!-- ═══ Artists Tab ═══ -->
         <section class="tab-panel active" id="tabArtists">
             <div class="table-controls">
-                <input type="text" id="artistSearch" class="input-search" placeholder="Search... (a|b  -exclude  \"
-                    exact\" /regex/)" title="Smart search: space=AND, |=OR, -term=exclude, \" phrase\"=exact,
-                    /regex/=regex">
+                <input type="text" id="artistSearch" class="input-search"
+                    placeholder="Search… tag:rock  artist:name  -exclude"
+                    title="Smart search: space=AND, |=OR, -term=exclude, &quot;phrase&quot;=exact, field:value=column search">
                 <label class="min-filter">
                     Min appearances:
                     <input type="number" id="artistMinAppearances" value="1" min="1" class="input-sm-num">
@@ -126,6 +126,7 @@
                             <th data-sort="minRating">Min</th>
                             <th data-sort="maxRating">Max</th>
                             <th data-sort="albumCount">Albums</th>
+                            <th>Tags</th>
                         </tr>
                     </thead>
                     <tbody id="artistTableBody"></tbody>
@@ -136,9 +137,9 @@
         <!-- ═══ Albums Tab ═══ -->
         <section class="tab-panel" id="tabAlbums">
             <div class="table-controls">
-                <input type="text" id="albumSearch" class="input-search" placeholder="Search... (a|b  -exclude  \"
-                    exact\" /regex/)" title="Smart search: space=AND, |=OR, -term=exclude, \" phrase\"=exact,
-                    /regex/=regex">
+                <input type="text" id="albumSearch" class="input-search"
+                    placeholder="Search… tag:rock  artist:name  album:title  year:2007"
+                    title="Smart search: space=AND, |=OR, -term=exclude, &quot;phrase&quot;=exact, field:value=column search">
                 <label class="min-filter">
                     Min tracks:
                     <input type="number" id="albumMinTracks" value="1" min="1" class="input-sm-num">
@@ -157,6 +158,7 @@
                             <th data-sort="totalScore">Total</th>
                             <th data-sort="avgScore">Avg</th>
                             <th data-sort="adjustedScore" class="sorted-desc">Adjusted</th>
+                            <th>Tags</th>
                         </tr>
                     </thead>
                     <tbody id="albumTableBody"></tbody>

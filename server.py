@@ -23,6 +23,7 @@ DATA_DIR = BASE_DIR / "data"
 RATINGS_FILE = DATA_DIR / "ratings.json"
 UNRATED_FILE = DATA_DIR / "unrated.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
+ENTITY_TAGS_FILE = DATA_DIR / "entity_tags.json"
 BROWSER_AUTH_FILE = BASE_DIR / "browser.json"
 
 DEFAULT_SETTINGS = {
@@ -155,6 +156,26 @@ def _save_settings(settings):
     _ensure_data_dir()
     with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
+
+
+# ─── Entity Tags Persistence ───────────────────────────────────────────────
+# Stores tags for artists and albums.
+# Artists keyed by name, albums keyed by "Artist — Album" composite.
+def _load_entity_tags():
+    _ensure_data_dir()
+    if ENTITY_TAGS_FILE.exists():
+        try:
+            with open(ENTITY_TAGS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            pass
+    return {"artists": {}, "albums": {}}
+
+
+def _save_entity_tags(tags):
+    _ensure_data_dir()
+    with open(ENTITY_TAGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(tags, f, indent=2, ensure_ascii=False)
 
 
 # ─── History Cache ──────────────────────────────────────────────────────────
@@ -323,6 +344,12 @@ def api_analytics():
     for i, a in enumerate(artists):
         a["rank"] = i + 1
 
+    # Inject entity tags into artist objects
+    entity_tags = _load_entity_tags()
+    artist_tags = entity_tags.get("artists", {})
+    for a in artists:
+        a["tags"] = artist_tags.get(a["name"], [])
+
     # ── Album rankings ──
     album_data = {}
     for r in ratings:
@@ -358,6 +385,12 @@ def api_analytics():
     albums.sort(key=lambda x: x["adjustedScore"], reverse=True)
     for i, a in enumerate(albums):
         a["rank"] = i + 1
+
+    # Inject entity tags into album objects (keyed as "Artist — Album")
+    album_tags = entity_tags.get("albums", {})
+    for a in albums:
+        tag_key = f"{a['artist']} \u2014 {a['name']}"
+        a["tags"] = album_tags.get(tag_key, [])
 
     # ── Timeline (ratings per day) ──
     timeline = {}
@@ -611,6 +644,46 @@ def update_settings():
 
     _save_settings(settings)
     return jsonify({"success": True, "settings": settings})
+
+
+@app.route("/api/entity-tags", methods=["GET"])
+def get_entity_tags():
+    """Return all entity tags."""
+    return jsonify(_load_entity_tags())
+
+
+@app.route("/api/entity-tags", methods=["PUT"])
+def update_entity_tags():
+    """Update tags for an artist or album.
+    Body: { "type": "artists"|"albums", "name": "...", "tags": [...] }
+    For albums, 'name' should be 'Artist — Album'.
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    entity_type = data.get("type")
+    name = data.get("name", "").strip()
+    tags = data.get("tags", [])
+
+    if entity_type not in ("artists", "albums"):
+        return jsonify({"error": "type must be 'artists' or 'albums'"}), 400
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    if not isinstance(tags, list):
+        return jsonify({"error": "tags must be an array"}), 400
+
+    # Clean tags
+    tags = [t.strip() for t in tags if isinstance(t, str) and t.strip()]
+
+    entity_tags = _load_entity_tags()
+    if tags:
+        entity_tags[entity_type][name] = tags
+    else:
+        entity_tags[entity_type].pop(name, None)  # Remove if empty
+
+    _save_entity_tags(entity_tags)
+    return jsonify({"success": True, "tags": tags})
 
 
 @app.route("/api/now-playing")

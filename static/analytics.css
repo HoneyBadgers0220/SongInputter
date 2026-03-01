@@ -633,3 +633,79 @@
         display: none;
     }
 }
+
+/* ─── Entity Tags ───────────────────────────────────────────── */
+.tags-cell {
+    white-space: normal;
+    max-width: 200px;
+}
+
+.entity-tags-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+}
+
+.entity-tag-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    background: rgba(99, 102, 241, 0.15);
+    color: var(--text-accent);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    white-space: nowrap;
+}
+
+.entity-tag-pill .tag-remove {
+    all: unset;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    opacity: 0.5;
+    margin-left: 2px;
+    color: var(--text-accent);
+}
+
+.entity-tag-pill .tag-remove:hover {
+    opacity: 1;
+    color: #ef4444;
+}
+
+.tag-add-btn {
+    all: unset;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px dashed rgba(255, 255, 255, 0.15);
+    transition: all 0.15s;
+}
+
+.tag-add-btn:hover {
+    color: var(--text-accent);
+    border-color: var(--text-accent);
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.tag-inline-input {
+    width: 80px;
+    padding: 2px 6px;
+    border-radius: 8px;
+    border: 1px solid var(--text-accent);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    font-size: 11px;
+    outline: none;
+}

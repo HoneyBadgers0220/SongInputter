@@ -10,12 +10,9 @@ NOTE: You can now run setup directly in the browser!
 
 import subprocess
 import sys
-import json
-import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-BROWSER_AUTH_FILE = BASE_DIR / "browser.json"
 
 
 def print_header():
@@ -41,101 +38,48 @@ def step_install_deps():
         return False
 
 
-def step_browser_auth():
-    print("─── Step 2: YouTube Music Browser Authentication ───")
+def step_install_cloudflared():
+    print("─── Step 2: Checking for Cloudflare Tunnel (cloudflared) ───")
     print()
 
-    if BROWSER_AUTH_FILE.exists():
-        print("  Found existing browser.json.")
-        reuse = input("  Use existing auth? (Y/n): ").strip().lower()
-        if reuse != "n":
-            print("  ✓ Using existing auth.\n")
+    # Check if cloudflared is already available
+    try:
+        result = subprocess.run(
+            ["cloudflared", "--version"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            version = result.stdout.strip().split("\n")[0]
+            print(f"  ✓ cloudflared already installed: {version}\n")
             return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
 
-    print("  You need to copy request headers from your browser.")
-    print()
-    print("  Steps:")
-    print("  1. Open a browser and go to https://music.youtube.com")
-    print("  2. Make sure you are logged in")
-    print("  3. Open Developer Tools (F12 or Ctrl+Shift+I)")
-    print("  4. Go to the 'Network' tab")
-    print("  5. Filter requests by typing '/browse' in the filter bar")
-    print("  6. Click around in YouTube Music (e.g. click Library)")
-    print("     to trigger a POST request to /browse")
-    print()
-    print("  For Chrome/Edge:")
-    print("    - Click on any 'browse?' request")
-    print("    - In the Headers tab, scroll to 'Request Headers'")
-    print("    - Copy everything from 'accept: */*' to the end")
-    print()
-    print("  For Firefox:")
-    print("    - Right-click the 'browse' request")
-    print("    - Click 'Copy > Copy Request Headers'")
-    print()
-    print("  Paste the headers below, then press Enter twice")
-    print("  when done (empty line to finish):")
+    print("  cloudflared not found. Attempting to install via winget...")
     print()
 
-    lines = []
-    while True:
-        try:
-            line = input()
-            if line.strip() == "" and lines:
-                break
-            lines.append(line)
-        except EOFError:
-            break
-
-    headers_raw = "\n".join(lines)
-
-    if not headers_raw.strip():
-        print("  ✗ No headers provided.")
-        return False
-
+    # Try installing via winget
     try:
-        import ytmusicapi
-        ytmusicapi.setup(filepath=str(BROWSER_AUTH_FILE), headers_raw=headers_raw)
-        print(f"\n  ✓ Auth saved to browser.json\n")
+        subprocess.check_call(
+            ["winget", "install", "--id", "Cloudflare.cloudflared",
+             "--accept-package-agreements", "--accept-source-agreements"],
+            cwd=str(BASE_DIR),
+        )
+        print("\n  ✓ cloudflared installed successfully.")
+        print("  ⚠ You may need to restart your terminal for 'cloudflared' to be on PATH.\n")
         return True
-    except Exception as e:
-        print(f"\n  ✗ Auth setup failed: {e}")
-        print("  Make sure you copied the full request headers.")
-        return False
-
-
-def step_verify():
-    print("─── Step 3: Verifying Connection ───")
-    print()
-
-    try:
-        from ytmusicapi import YTMusic
-
-        yt = YTMusic(str(BROWSER_AUTH_FILE))
-
-        # Try to fetch history
-        try:
-            history = yt.get_history()
-            if history:
-                latest = history[0]
-                title = latest.get("title", "Unknown")
-                artist = ", ".join(a.get("name", "") for a in latest.get("artists", []))
-                print(f"  ✓ Connected! Most recent song: {title} by {artist}")
-            else:
-                print("  ✓ Connected! (No listening history yet)")
-        except Exception:
-            # Fallback: try library
-            try:
-                yt.get_library_songs(limit=1)
-                print("  ✓ Connected to YouTube Music!")
-            except Exception:
-                print("  ✓ Authenticated! (Play a song on YT Music to test)")
-
+    except FileNotFoundError:
+        print("  winget not found. Please install cloudflared manually:")
+        print("    https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
         print()
-        return True
-    except Exception as e:
-        print(f"  ✗ Verification failed: {e}")
-        print("  Try running setup.py again with fresh headers.\n")
-        return False
+        skip = input("  Skip this step and continue anyway? (Y/n): ").strip().lower()
+        return skip != "n"
+    except subprocess.CalledProcessError:
+        print("\n  ✗ winget install failed. Please install cloudflared manually:")
+        print("    https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
+        print()
+        skip = input("  Skip this step and continue anyway? (Y/n): ").strip().lower()
+        return skip != "n"
 
 
 def main():
@@ -143,8 +87,7 @@ def main():
 
     steps = [
         ("Install dependencies", step_install_deps),
-        ("Browser authentication", step_browser_auth),
-        ("Verify connection", step_verify),
+        ("Install cloudflared", step_install_cloudflared),
     ]
 
     for name, step_fn in steps:
@@ -159,6 +102,8 @@ def main():
     print("    python server.py")
     print()
     print("  Then open http://localhost:5000 in your browser.")
+    print("  If this is your first time, the app will walk you")
+    print("  through YouTube Music authentication automatically.")
     print("=" * 58)
     print()
 

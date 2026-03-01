@@ -376,9 +376,219 @@ function applySettingsToUI() {
     if (sidebarTitle) sidebarTitle.textContent = appSettings.sidebarMode === "album" ? "Album Tracks" : "Related";
 }
 
+// ─── Color Palette System ──────────────────────────────────────
+const PALETTES = {
+    default: {
+        accent: "#8b5cf6", accentHover: "#a78bfa", secondary: "#6366f1", textAccent: "#a78bfa",
+        bgBase: "#0a0a0f", bgSurface: "#12121a", bgElevated: "#1a1a26",
+        gradientBg: "linear-gradient(160deg, #0a0a0f 0%, #0f0b1e 40%, #0a0a0f 100%)",
+    },
+    midnight: {
+        accent: "#3b82f6", accentHover: "#60a5fa", secondary: "#2563eb", textAccent: "#60a5fa",
+        bgBase: "#070b14", bgSurface: "#0c1220", bgElevated: "#111827",
+        gradientBg: "linear-gradient(160deg, #070b14 0%, #0a1628 40%, #070b14 100%)",
+    },
+    emerald: {
+        accent: "#10b981", accentHover: "#34d399", secondary: "#059669", textAccent: "#34d399",
+        bgBase: "#060f0b", bgSurface: "#0b1a14", bgElevated: "#10261d",
+        gradientBg: "linear-gradient(160deg, #060f0b 0%, #081f14 40%, #060f0b 100%)",
+    },
+    rose: {
+        accent: "#f43f5e", accentHover: "#fb7185", secondary: "#e11d48", textAccent: "#fb7185",
+        bgBase: "#0f0608", bgSurface: "#1a0c10", bgElevated: "#261219",
+        gradientBg: "linear-gradient(160deg, #0f0608 0%, #1a080e 40%, #0f0608 100%)",
+    },
+    amber: {
+        accent: "#f59e0b", accentHover: "#fbbf24", secondary: "#d97706", textAccent: "#fbbf24",
+        bgBase: "#0f0c06", bgSurface: "#1a160c", bgElevated: "#262012",
+        gradientBg: "linear-gradient(160deg, #0f0c06 0%, #1a1408 40%, #0f0c06 100%)",
+    },
+    mono: {
+        accent: "#a1a1aa", accentHover: "#d4d4d8", secondary: "#71717a", textAccent: "#d4d4d8",
+        bgBase: "#09090b", bgSurface: "#111113", bgElevated: "#18181b",
+        gradientBg: "linear-gradient(160deg, #09090b 0%, #0f0f12 40%, #09090b 100%)",
+    },
+    // Light modes
+    light: {
+        accent: "#7c3aed", accentHover: "#6d28d9", secondary: "#6366f1", textAccent: "#7c3aed",
+        bgBase: "#f8f8fc", bgSurface: "#ffffff", bgElevated: "#f0f0f6",
+        gradientBg: "linear-gradient(160deg, #f8f8fc 0%, #f0eeff 40%, #f8f8fc 100%)",
+        textPrimary: "#1a1a2e", textSecondary: "#4a5568", textMuted: "#9ca3af",
+        borderSubtle: "rgba(0, 0, 0, 0.08)", borderGlass: "rgba(0, 0, 0, 0.12)",
+        bgGlass: "rgba(0, 0, 0, 0.03)", bgGlassHover: "rgba(0, 0, 0, 0.06)",
+    },
+    lightBlue: {
+        accent: "#2563eb", accentHover: "#1d4ed8", secondary: "#3b82f6", textAccent: "#2563eb",
+        bgBase: "#f0f4ff", bgSurface: "#ffffff", bgElevated: "#e8eeff",
+        gradientBg: "linear-gradient(160deg, #f0f4ff 0%, #dbeafe 40%, #f0f4ff 100%)",
+        textPrimary: "#0f172a", textSecondary: "#475569", textMuted: "#94a3b8",
+        borderSubtle: "rgba(0, 0, 0, 0.06)", borderGlass: "rgba(0, 0, 0, 0.1)",
+        bgGlass: "rgba(0, 0, 0, 0.03)", bgGlassHover: "rgba(0, 0, 0, 0.06)",
+    },
+    highContrast: {
+        accent: "#facc15", accentHover: "#fde047", secondary: "#eab308", textAccent: "#facc15",
+        bgBase: "#000000", bgSurface: "#0a0a0a", bgElevated: "#141414",
+        gradientBg: "none",
+        textPrimary: "#ffffff", textSecondary: "#e0e0e0", textMuted: "#b0b0b0",
+        borderSubtle: "rgba(255, 255, 255, 0.2)", borderGlass: "rgba(255, 255, 255, 0.3)",
+        bgGlass: "rgba(255, 255, 255, 0.08)", bgGlassHover: "rgba(255, 255, 255, 0.12)",
+    },
+};
+
+function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function lightenHex(hex, amount) {
+    let r = parseInt(hex.slice(1, 3), 16);
+    let g = parseInt(hex.slice(3, 5), 16);
+    let b = parseInt(hex.slice(5, 7), 16);
+    r = Math.min(255, r + amount);
+    g = Math.min(255, g + amount);
+    b = Math.min(255, b + amount);
+    return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+}
+
+function buildCustomPalette(accent, bgBase, bgSurface) {
+    return {
+        accent, accentHover: lightenHex(accent, 40), secondary: lightenHex(accent, -20),
+        textAccent: lightenHex(accent, 40),
+        bgBase, bgSurface, bgElevated: lightenHex(bgSurface, 12),
+        gradientBg: `linear-gradient(160deg, ${bgBase} 0%, ${lightenHex(bgBase, 8)} 40%, ${bgBase} 100%)`,
+    };
+}
+
+function applyPalette(p) {
+    const r = document.documentElement.style;
+    r.setProperty("--accent-primary", p.accent);
+    r.setProperty("--accent-primary-hover", p.accentHover);
+    r.setProperty("--accent-secondary", p.secondary);
+    r.setProperty("--accent-glow", hexToRgba(p.accent, 0.25));
+    r.setProperty("--gradient-primary", `linear-gradient(135deg, ${p.accent}, ${p.secondary})`);
+    r.setProperty("--text-accent", p.textAccent);
+    r.setProperty("--bg-base", p.bgBase);
+    r.setProperty("--bg-surface", p.bgSurface);
+    r.setProperty("--bg-elevated", p.bgElevated);
+    r.setProperty("--gradient-bg", p.gradientBg);
+    r.setProperty("--shadow-glow", `0 0 30px ${hexToRgba(p.accent, 0.15)}`);
+    // Text + border overrides (for light mode and high contrast)
+    if (p.textPrimary) {
+        r.setProperty("--text-primary", p.textPrimary);
+        r.setProperty("--text-secondary", p.textSecondary);
+        r.setProperty("--text-muted", p.textMuted);
+        r.setProperty("--border-subtle", p.borderSubtle);
+        r.setProperty("--border-glass", p.borderGlass);
+        r.setProperty("--bg-glass", p.bgGlass);
+        r.setProperty("--bg-glass-hover", p.bgGlassHover);
+    } else {
+        // Reset to dark-mode defaults
+        r.setProperty("--text-primary", "#f0f0f5");
+        r.setProperty("--text-secondary", "#9ca3af");
+        r.setProperty("--text-muted", "#6b7280");
+        r.setProperty("--border-subtle", "rgba(255, 255, 255, 0.06)");
+        r.setProperty("--border-glass", "rgba(255, 255, 255, 0.1)");
+        r.setProperty("--bg-glass", "rgba(255, 255, 255, 0.04)");
+        r.setProperty("--bg-glass-hover", "rgba(255, 255, 255, 0.07)");
+    }
+}
+
+function loadPalette() {
+    const saved = localStorage.getItem("songrate-palette");
+    if (!saved) return;
+    try {
+        const data = JSON.parse(saved);
+        let p;
+        if (data.id === "custom") {
+            p = buildCustomPalette(data.accent || "#8b5cf6", data.bgBase || "#0a0a0f", data.bgSurface || "#12121a");
+        } else {
+            p = PALETTES[data.id] || PALETTES.default;
+        }
+        applyPalette(p);
+    } catch { /* ignore */ }
+}
+
+function savePaletteChoice(id, customColors) {
+    const data = { id, ...customColors };
+    localStorage.setItem("songrate-palette", JSON.stringify(data));
+}
+
+function initPalette() {
+    const container = document.getElementById("palettePresets");
+    const customOpts = document.getElementById("customPaletteOptions");
+    if (!container) return;
+
+    // Restore active state
+    const saved = localStorage.getItem("songrate-palette");
+    let activeId = "default";
+    let customData = {};
+    if (saved) {
+        try {
+            const d = JSON.parse(saved);
+            activeId = d.id || "default";
+            customData = d;
+        } catch { /* ignore */ }
+    }
+
+    container.querySelectorAll(".palette-swatch").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.palette === activeId);
+    });
+
+    // Show custom options if custom is active
+    if (activeId === "custom" && customOpts) {
+        customOpts.classList.remove("hidden");
+        document.getElementById("customAccent").value = customData.accent || "#8b5cf6";
+        document.getElementById("customBg").value = customData.bgBase || "#0a0a0f";
+        document.getElementById("customSurface").value = customData.bgSurface || "#12121a";
+    }
+
+    // Swatch clicks
+    container.addEventListener("click", (e) => {
+        const btn = e.target.closest(".palette-swatch");
+        if (!btn) return;
+        const id = btn.dataset.palette;
+        container.querySelectorAll(".palette-swatch").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+
+        if (id === "custom") {
+            customOpts?.classList.remove("hidden");
+            const accent = document.getElementById("customAccent").value;
+            const bg = document.getElementById("customBg").value;
+            const surface = document.getElementById("customSurface").value;
+            const p = buildCustomPalette(accent, bg, surface);
+            applyPalette(p);
+            savePaletteChoice("custom", { accent, bgBase: bg, bgSurface: surface });
+        } else {
+            customOpts?.classList.add("hidden");
+            applyPalette(PALETTES[id]);
+            savePaletteChoice(id);
+        }
+    });
+
+    // Custom color pickers — live preview
+    ["customAccent", "customBg", "customSurface"].forEach(inputId => {
+        const el = document.getElementById(inputId);
+        if (!el) return;
+        el.addEventListener("input", () => {
+            const accent = document.getElementById("customAccent").value;
+            const bg = document.getElementById("customBg").value;
+            const surface = document.getElementById("customSurface").value;
+            const p = buildCustomPalette(accent, bg, surface);
+            applyPalette(p);
+            savePaletteChoice("custom", { accent, bgBase: bg, bgSurface: surface });
+        });
+    });
+}
+
+// Apply palette immediately on page load (before DOMContentLoaded for no flash)
+loadPalette();
+
 function openSettings() {
     dom.settingsMin.value = appSettings.ratingMin;
     dom.settingsMax.value = appSettings.ratingMax;
+    initPalette(); // sync palette UI
     dom.settingsModal.classList.remove("hidden");
 }
 

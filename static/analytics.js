@@ -1,7 +1,58 @@
-/**
+﻿/**
  * SongRate Analytics — Interactive data analysis dashboard
  * Charts via Chart.js, sortable tables, custom graph builder
  */
+
+// ─── Apply saved palette from main app ─────────────────────────
+(function () {
+    const saved = localStorage.getItem("songrate-palette");
+    if (!saved) return;
+    try {
+        const data = JSON.parse(saved);
+        const PALETTES = {
+            default: null,
+            midnight: { accent: "#3b82f6", accentHover: "#60a5fa", secondary: "#2563eb", textAccent: "#60a5fa", bgBase: "#070b14", bgSurface: "#0c1220", bgElevated: "#111827", gradientBg: "linear-gradient(160deg, #070b14 0%, #0a1628 40%, #070b14 100%)" },
+            emerald: { accent: "#10b981", accentHover: "#34d399", secondary: "#059669", textAccent: "#34d399", bgBase: "#060f0b", bgSurface: "#0b1a14", bgElevated: "#10261d", gradientBg: "linear-gradient(160deg, #060f0b 0%, #081f14 40%, #060f0b 100%)" },
+            rose: { accent: "#f43f5e", accentHover: "#fb7185", secondary: "#e11d48", textAccent: "#fb7185", bgBase: "#0f0608", bgSurface: "#1a0c10", bgElevated: "#261219", gradientBg: "linear-gradient(160deg, #0f0608 0%, #1a080e 40%, #0f0608 100%)" },
+            amber: { accent: "#f59e0b", accentHover: "#fbbf24", secondary: "#d97706", textAccent: "#fbbf24", bgBase: "#0f0c06", bgSurface: "#1a160c", bgElevated: "#262012", gradientBg: "linear-gradient(160deg, #0f0c06 0%, #1a1408 40%, #0f0c06 100%)" },
+            mono: { accent: "#a1a1aa", accentHover: "#d4d4d8", secondary: "#71717a", textAccent: "#d4d4d8", bgBase: "#09090b", bgSurface: "#111113", bgElevated: "#18181b", gradientBg: "linear-gradient(160deg, #09090b 0%, #0f0f12 40%, #09090b 100%)" },
+            light: { accent: "#7c3aed", accentHover: "#6d28d9", secondary: "#6366f1", textAccent: "#7c3aed", bgBase: "#f8f8fc", bgSurface: "#ffffff", bgElevated: "#f0f0f6", gradientBg: "linear-gradient(160deg, #f8f8fc 0%, #f0eeff 40%, #f8f8fc 100%)", textPrimary: "#1a1a2e", textSecondary: "#4a5568", textMuted: "#9ca3af", borderSubtle: "rgba(0,0,0,0.08)", borderGlass: "rgba(0,0,0,0.12)", bgGlass: "rgba(0,0,0,0.03)", bgGlassHover: "rgba(0,0,0,0.06)" },
+            lightBlue: { accent: "#2563eb", accentHover: "#1d4ed8", secondary: "#3b82f6", textAccent: "#2563eb", bgBase: "#f0f4ff", bgSurface: "#ffffff", bgElevated: "#e8eeff", gradientBg: "linear-gradient(160deg, #f0f4ff 0%, #dbeafe 40%, #f0f4ff 100%)", textPrimary: "#0f172a", textSecondary: "#475569", textMuted: "#94a3b8", borderSubtle: "rgba(0,0,0,0.06)", borderGlass: "rgba(0,0,0,0.1)", bgGlass: "rgba(0,0,0,0.03)", bgGlassHover: "rgba(0,0,0,0.06)" },
+            highContrast: { accent: "#facc15", accentHover: "#fde047", secondary: "#eab308", textAccent: "#facc15", bgBase: "#000000", bgSurface: "#0a0a0a", bgElevated: "#141414", gradientBg: "none", textPrimary: "#ffffff", textSecondary: "#e0e0e0", textMuted: "#b0b0b0", borderSubtle: "rgba(255,255,255,0.2)", borderGlass: "rgba(255,255,255,0.3)", bgGlass: "rgba(255,255,255,0.08)", bgGlassHover: "rgba(255,255,255,0.12)" },
+        };
+        function hexToRgba(hex, a) { const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16); return `rgba(${r},${g},${b},${a})`; }
+        function lighten(hex, n) { let r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16); r = Math.min(255, r + n); g = Math.min(255, g + n); b = Math.min(255, b + n); return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`; }
+        let p;
+        if (data.id === "custom") {
+            const a = data.accent || "#8b5cf6", bg = data.bgBase || "#0a0a0f", sf = data.bgSurface || "#12121a";
+            p = { accent: a, accentHover: lighten(a, 40), secondary: lighten(a, -20), textAccent: lighten(a, 40), bgBase: bg, bgSurface: sf, bgElevated: lighten(sf, 12), gradientBg: `linear-gradient(160deg,${bg} 0%,${lighten(bg, 8)} 40%,${bg} 100%)` };
+        } else {
+            p = PALETTES[data.id];
+        }
+        if (!p) return;
+        const s = document.documentElement.style;
+        s.setProperty("--accent-primary", p.accent);
+        s.setProperty("--accent-primary-hover", p.accentHover);
+        s.setProperty("--accent-secondary", p.secondary);
+        s.setProperty("--accent-glow", hexToRgba(p.accent, 0.25));
+        s.setProperty("--gradient-primary", `linear-gradient(135deg, ${p.accent}, ${p.secondary})`);
+        s.setProperty("--text-accent", p.textAccent);
+        s.setProperty("--bg-base", p.bgBase);
+        s.setProperty("--bg-surface", p.bgSurface);
+        s.setProperty("--bg-elevated", p.bgElevated);
+        s.setProperty("--gradient-bg", p.gradientBg);
+        s.setProperty("--shadow-glow", `0 0 30px ${hexToRgba(p.accent, 0.15)}`);
+        if (p.textPrimary) {
+            s.setProperty("--text-primary", p.textPrimary);
+            s.setProperty("--text-secondary", p.textSecondary);
+            s.setProperty("--text-muted", p.textMuted);
+            s.setProperty("--border-subtle", p.borderSubtle);
+            s.setProperty("--border-glass", p.borderGlass);
+            s.setProperty("--bg-glass", p.bgGlass);
+            s.setProperty("--bg-glass-hover", p.bgGlassHover);
+        }
+    } catch { }
+})();
 
 // ─── State ─────────────────────────────────────────────────────
 let analyticsData = null;
@@ -375,7 +426,7 @@ function smartMatch(query, ...fields) {
     return orGroups.some(group => {
         // Tokenize: respect quoted strings, regex, and bare words
         const tokens = [];
-        const re = /([!-]?)("([^"]*)"|\/(.*?)\/([i]?)|(\S+))/g;
+        const re = /([!-]?)("([^"]*)"|\/([^\/]*)\/([i]?)|(\S+))/g;
         let m;
         while ((m = re.exec(group)) !== null) {
             const negate = m[1] === "-" || m[1] === "!";
@@ -406,18 +457,146 @@ function smartMatch(query, ...fields) {
     });
 }
 
+// ─── Column-Specific Search ────────────────────────────────────
+// Like smartMatch but supports field:value prefixes, e.g:
+//   artist:radiohead  tag:rock  album:"in rainbows"  year:2007
+// Bare tokens (no prefix) match all fields.
+// fieldsMap = { artist: "Radiohead", album: "OK Computer", tag: "rock british", ... }
+function smartFieldMatch(query, fieldsMap) {
+    if (!query) return true;
+    const allText = Object.values(fieldsMap).map(v => (v || "").toLowerCase()).join(" ");
+
+    const orGroups = query.split("|").map(g => g.trim()).filter(Boolean);
+    return orGroups.some(group => {
+        const tokens = [];
+        // Match field:value, field:"quoted value", or regular tokens
+        const re = /([!-]?)(?:(\w+):)?("([^"]*)"|\/([^/]*)\/([i]?)|(\S+))/g;
+        let m;
+        while ((m = re.exec(group)) !== null) {
+            const negate = m[1] === "-" || m[1] === "!";
+            const field = m[2] ? m[2].toLowerCase() : null; // e.g. "artist", "tag", null
+            let tok;
+            if (m[4] !== undefined) {
+                tok = { negate, field, type: "exact", value: m[4].toLowerCase() };
+            } else if (m[5] !== undefined) {
+                try {
+                    const flags = (m[6] || "") + (m[6]?.includes("i") ? "" : "i");
+                    tok = { negate, field, type: "regex", value: new RegExp(m[5], flags) };
+                } catch {
+                    tok = { negate, field, type: "exact", value: m[5].toLowerCase() };
+                }
+            } else {
+                tok = { negate, field, type: "contains", value: m[7].toLowerCase() };
+            }
+            tokens.push(tok);
+        }
+
+        return tokens.every(tok => {
+            // Determine which text to search: specific field or all fields
+            let searchText;
+            if (tok.field && fieldsMap[tok.field] !== undefined) {
+                searchText = (fieldsMap[tok.field] || "").toLowerCase();
+            } else if (tok.field) {
+                // Unknown field name — try matching against all text anyway
+                searchText = allText;
+            } else {
+                searchText = allText;
+            }
+
+            let hit;
+            if (tok.type === "regex") hit = tok.value.test(searchText);
+            else hit = searchText.includes(tok.value);
+            return tok.negate ? !hit : hit;
+        });
+    });
+}
+
+// ─── Entity Tag Helpers ────────────────────────────────────────
+function renderTagPills(tags, entityType, entityName) {
+    const pills = (tags || []).map(t =>
+        `<span class="entity-tag-pill" data-type="${entityType}" data-name="${esc(entityName)}" data-tag="${esc(t)}">${esc(t)}<button class="tag-remove" onclick="event.stopPropagation();removeEntityTag('${entityType}','${esc(entityName).replace(/'/g, "\\'")}','${esc(t).replace(/'/g, "\\\'")}')">&times;</button></span>`
+    ).join("");
+    return `<span class="entity-tags-wrap">${pills}<button class="tag-add-btn" onclick="event.stopPropagation();showTagInput(this,'${entityType}','${esc(entityName).replace(/'/g, "\\\'")}')" title="Add tag">+</button></span>`;
+}
+
+window.showTagInput = function (btn, entityType, entityName) {
+    // If already open, skip
+    if (btn.parentElement.querySelector(".tag-inline-input")) return;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "tag-inline-input";
+    input.placeholder = "tag name…";
+    input.addEventListener("keydown", async (e) => {
+        if (e.key === "Enter" && input.value.trim()) {
+            e.preventDefault();
+            await addEntityTag(entityType, entityName, input.value.trim());
+            input.remove();
+        } else if (e.key === "Escape") {
+            input.remove();
+        }
+    });
+    input.addEventListener("blur", () => setTimeout(() => input.remove(), 200));
+    btn.parentElement.insertBefore(input, btn);
+    input.focus();
+};
+
+async function addEntityTag(entityType, entityName, newTag) {
+    // Find existing tags from current data
+    const list = entityType === "artists" ? analyticsData.artists : analyticsData.albums;
+    const entity = list.find(a => {
+        if (entityType === "artists") return a.name === entityName;
+        return `${a.artist} \u2014 ${a.name}` === entityName;
+    });
+    const existing = entity ? [...(entity.tags || [])] : [];
+    if (existing.includes(newTag)) return;
+    existing.push(newTag);
+    await saveEntityTags(entityType, entityName, existing);
+}
+
+window.removeEntityTag = async function (entityType, entityName, tag) {
+    const list = entityType === "artists" ? analyticsData.artists : analyticsData.albums;
+    const entity = list.find(a => {
+        if (entityType === "artists") return a.name === entityName;
+        return `${a.artist} \u2014 ${a.name}` === entityName;
+    });
+    if (!entity) return;
+    const updated = (entity.tags || []).filter(t => t !== tag);
+    await saveEntityTags(entityType, entityName, updated);
+};
+
+async function saveEntityTags(entityType, entityName, tags) {
+    const res = await fetch("/api/entity-tags", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: entityType, name: entityName, tags }),
+    });
+    if (res.ok) {
+        // Update local data and re-render
+        const list = entityType === "artists" ? analyticsData.artists : analyticsData.albums;
+        const entity = list.find(a => {
+            if (entityType === "artists") return a.name === entityName;
+            return `${a.artist} \u2014 ${a.name}` === entityName;
+        });
+        if (entity) entity.tags = tags;
+        if (entityType === "artists") renderArtistTable();
+        else renderAlbumTable();
+    }
+}
+
 // ─── Artist Table ──────────────────────────────────────────────
 function renderArtistTable() {
     const search = document.getElementById("artistSearch").value.trim();
     const minApp = parseInt(document.getElementById("artistMinAppearances").value) || 1;
 
     let data = analyticsData.artists.filter(
-        (a) => a.appearances >= minApp && smartMatch(search, a.name)
+        (a) => a.appearances >= minApp && smartFieldMatch(search, {
+            artist: a.name, name: a.name, tag: (a.tags || []).join(" ")
+        })
     );
 
     const tbody = document.getElementById("artistTableBody");
     if (!data.length) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:40px">No artists found</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:40px">No artists found</td></tr>`;
         return;
     }
 
@@ -434,6 +613,7 @@ function renderArtistTable() {
             <td class="score-cell">${a.minRating}</td>
             <td class="score-cell">${a.maxRating}</td>
             <td class="score-cell">${a.albumCount}</td>
+            <td class="tags-cell">${renderTagPills(a.tags, "artists", a.name)}</td>
         </tr>`
         )
         .join("");
@@ -445,18 +625,23 @@ function renderAlbumTable() {
 
     let data = analyticsData.albums.filter(
         (a) =>
-            a.appearances >= minTracks && smartMatch(search, a.name, a.artist)
+            a.appearances >= minTracks && smartFieldMatch(search, {
+                album: a.name, name: a.name, artist: a.artist,
+                year: String(a.year || ""), tag: (a.tags || []).join(" ")
+            })
     );
 
     const tbody = document.getElementById("albumTableBody");
     if (!data.length) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:40px">No albums found</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:40px">No albums found</td></tr>`;
         return;
     }
 
     tbody.innerHTML = data
         .map(
-            (a, i) => `
+            (a, i) => {
+                const tagKey = `${a.artist} \u2014 ${a.name}`;
+                return `
         <tr class="${tierClass(i + 1)}">
             <td class="rank-cell rank-${i + 1}">${i + 1}</td>
             <td><img class="album-art-thumb" src="${a.albumArt || ""}" alt="" onerror="this.style.display='none'"></td>
@@ -467,7 +652,9 @@ function renderAlbumTable() {
             <td class="score-cell">${a.totalScore}</td>
             <td class="score-cell">${a.avgScore.toFixed(2)}</td>
             <td class="score-cell score-adjusted">${a.adjustedScore.toFixed(2)}</td>
-        </tr>`
+            <td class="tags-cell">${renderTagPills(a.tags, "albums", tagKey)}</td>
+        </tr>`;
+            }
         )
         .join("");
 }
