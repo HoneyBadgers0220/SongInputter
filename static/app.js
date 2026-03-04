@@ -131,6 +131,26 @@ function initMainApp() {
     loadUnrated();
     startPolling();
     bindEvents();
+    loadTunnelUrl();
+}
+
+async function loadTunnelUrl() {
+    try {
+        const res = await api("/api/tunnel-url");
+        if (res && res.url) {
+            const badge = document.getElementById("tunnelBadge");
+            const urlSpan = document.getElementById("tunnelUrl");
+            if (badge && urlSpan) {
+                urlSpan.textContent = res.url;
+                badge.classList.remove("hidden");
+                badge.addEventListener("click", () => {
+                    navigator.clipboard.writeText(res.url).then(() => {
+                        toast("Tunnel URL copied!", "success");
+                    });
+                });
+            }
+        }
+    } catch { /* no tunnel active */ }
 }
 
 function bindEvents() {

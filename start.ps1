@@ -26,36 +26,48 @@ if ($server.HasExited) {
 }
 Write-Host "  OK - Server running on port 5000" -ForegroundColor Green
 
-# 2. Start Cloudflare Tunnel
+# 2. Start Cloudflare Tunnel (optional — failures won't block the app)
 Write-Host "[2/3] Starting Cloudflare Tunnel..." -ForegroundColor Yellow
 
-$logFile = Join-Path $DIR "tunnel.log"
-if (Test-Path $logFile) { try { Clear-Content $logFile -Force -ErrorAction Stop } catch { <# file locked, ignore #> } }
-
-$tunnel = Start-Process -FilePath $CF -ArgumentList "tunnel", "--url", "http://localhost:5000" -RedirectStandardError $logFile -PassThru -WindowStyle Hidden
-
-# Wait for the URL to appear in the log (up to 30 seconds)
 $publicUrl = ""
-for ($i = 0; $i -lt 30; $i++) {
-    Start-Sleep -Seconds 1
-    if (Test-Path $logFile) {
-        $lines = Get-Content $logFile
-        foreach ($line in $lines) {
-            if ($line -match "(https://[a-z0-9\-]+\.trycloudflare\.com)") {
-                $publicUrl = $Matches[1]
-                break
+$tunnel = $null
+$logFile = Join-Path $DIR "tunnel.log"
+
+try {
+    if (Test-Path $logFile) { try { Clear-Content $logFile -Force -ErrorAction Stop } catch { <# file locked, ignore #> } }
+
+    $tunnel = Start-Process -FilePath $CF -ArgumentList "tunnel", "--url", "http://localhost:5000" -RedirectStandardError $logFile -PassThru -WindowStyle Hidden
+
+    # Wait for the URL to appear in the log (up to 30 seconds)
+    for ($i = 0; $i -lt 30; $i++) {
+        Start-Sleep -Seconds 1
+        if (Test-Path $logFile) {
+            $lines = Get-Content $logFile
+            foreach ($line in $lines) {
+                if ($line -match "(https://[a-z0-9\-]+\.trycloudflare\.com)") {
+                    $publicUrl = $Matches[1]
+                    break
+                }
             }
+            if ($publicUrl) { break }
         }
-        if ($publicUrl) { break }
+    }
+
+    if (-not $publicUrl) {
+        Write-Host "  WARNING: Could not detect tunnel URL." -ForegroundColor Red
+        Write-Host "  Check tunnel.log for details." -ForegroundColor Red
+    }
+    else {
+        Write-Host "  OK - Tunnel active" -ForegroundColor Green
+        # Write URL to file so the web UI can display it
+        $urlFile = Join-Path (Join-Path $DIR "data") "tunnel_url.txt"
+        if (-not (Test-Path (Join-Path $DIR "data"))) { New-Item -ItemType Directory -Path (Join-Path $DIR "data") | Out-Null }
+        Set-Content -Path $urlFile -Value $publicUrl -Force
     }
 }
-
-if (-not $publicUrl) {
-    Write-Host "  WARNING: Could not detect tunnel URL." -ForegroundColor Red
-    Write-Host "  Check tunnel.log for details." -ForegroundColor Red
-}
-else {
-    Write-Host "  OK - Tunnel active" -ForegroundColor Green
+catch {
+    Write-Host "  WARNING: Cloudflare Tunnel failed to start." -ForegroundColor Red
+    Write-Host "  The app will still work locally. Error: $_" -ForegroundColor DarkGray
 }
 
 # 3. Show URLs and copy to clipboard
@@ -81,8 +93,18 @@ if ($publicUrl) {
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Open browser
-Start-Process "http://localhost:5000"
+# Open in app mode (no browser chrome — looks like a native app)
+$edgePath = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+if (-not (Test-Path $edgePath)) {
+    $edgePath = "C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+}
+if (Test-Path $edgePath) {
+    Start-Process $edgePath "--app=http://localhost:5000"
+}
+else {
+    # Fallback: open in default browser
+    Start-Process "http://localhost:5000"
+}
 
 Write-Host "Press Ctrl+C or close this window to stop." -ForegroundColor DarkGray
 Write-Host ""
@@ -99,5 +121,7 @@ finally {
     try { if (-not $server.HasExited) { Stop-Process -Id $server.Id -Force } } catch {}
     try { if (-not $tunnel.HasExited) { Stop-Process -Id $tunnel.Id -Force } } catch {}
     if (Test-Path $logFile) { Remove-Item $logFile -Force }
+    $urlFile = Join-Path (Join-Path $DIR "data") "tunnel_url.txt"
+    if (Test-Path $urlFile) { Remove-Item $urlFile -Force }
     Write-Host "Done." -ForegroundColor Green
 }

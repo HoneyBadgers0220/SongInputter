@@ -1999,3 +1999,36 @@ body::before {
 .custom-palette-options.hidden {
     display: none;
 }
+
+/* ─── Tunnel URL Badge ──────────────────────────────────── */
+.tunnel-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 3px 0;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color 0.15s;
+    user-select: all;
+}
+
+.tunnel-badge:hover {
+    color: var(--text-secondary);
+}
+
+.tunnel-badge.hidden {
+    display: none;
+}
+
+.tunnel-icon {
+    font-size: 12px;
+}
+
+.tunnel-url {
+    font-family: 'Courier New', monospace;
+    letter-spacing: -0.3px;
+}

@@ -486,6 +486,20 @@ def api_setup_status():
     })
 
 
+@app.route("/api/tunnel-url")
+def api_tunnel_url():
+    """Return the Cloudflare tunnel URL if available."""
+    url_file = DATA_DIR / "tunnel_url.txt"
+    if url_file.exists():
+        try:
+            url = url_file.read_text(encoding="utf-8").strip()
+            if url:
+                return jsonify({"url": url})
+        except Exception:
+            pass
+    return jsonify({"url": None})
+
+
 @app.route("/api/setup/headers", methods=["POST"])
 def api_setup_headers():
     """Accept pasted headers and generate browser.json."""

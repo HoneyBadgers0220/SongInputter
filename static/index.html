@@ -14,11 +14,11 @@
     <link rel="stylesheet" href="style.css">
     <!-- PWA -->
     <link rel="manifest" href="/manifest.json">
-    <meta name="theme-color" content="#6366f1">
+    <meta name="theme-color" content="#8b5cf6">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="apple-touch-icon" href="/icon.svg">
-    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    <link rel="icon" href="/icon-192.png" type="image/png">
 </head>
 
 <body>
@@ -185,6 +185,11 @@
                     <span>JSON</span>
                 </button>
             </div>
+        </div>
+        <!-- Tunnel URL badge (hidden by default, shown when tunnel is active) -->
+        <div class="tunnel-badge hidden" id="tunnelBadge" title="Click to copy">
+            <span class="tunnel-icon">🌐</span>
+            <span class="tunnel-url" id="tunnelUrl"></span>
         </div>
     </header>
 
