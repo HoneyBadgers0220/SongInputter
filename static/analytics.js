@@ -80,8 +80,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initShrinkage();
     initSplitArtists();
     initTableSort();
-    initCustomBuilder();
-    initCustomValidation();
+    initPythonEditor();
     initChartFilters();
     initImport();
     loadAnalytics();
@@ -780,6 +779,7 @@ function renderCharts() {
     renderRadarChart();
     renderCumulativeChart();
     renderTagChart();
+    loadSavedCharts();
 }
 
 function getOrCreate(id, type, config) {
@@ -1101,13 +1101,22 @@ function renderArtistScatter() {
 }
 
 function renderRadarChart() {
-    const top5 = filterArtists(analyticsData.artists).slice(0, 5);
+    const allArtists = filterArtists(analyticsData.artists);
+    const top5 = allArtists.slice(0, 5);
     if (top5.length < 2) return;
 
-    // Normalize metrics to 0-10 scale for radar
-    const maxApp = Math.max(...top5.map((a) => a.appearances), 1);
-    const maxAlbums = Math.max(...top5.map((a) => a.albumCount), 1);
-    const rMax = 10; // rating max
+    // Compute min/max from the full dataset for proper scaling
+    const maxAvg = Math.max(...allArtists.map((a) => a.avgScore), 1);
+    const maxAdj = Math.max(...allArtists.map((a) => a.adjustedScore), 1);
+    const minAvg = Math.min(...allArtists.map((a) => a.avgScore));
+    const minAdj = Math.min(...allArtists.map((a) => a.adjustedScore));
+    const maxApp = Math.max(...allArtists.map((a) => a.appearances), 1);
+    const maxAlbums = Math.max(...allArtists.map((a) => a.albumCount), 1);
+    const rMax = Math.max(maxAvg, maxAdj);
+    const rMin = Math.floor(Math.min(minAvg, minAdj));
+
+    // Helper: scale a value from [0..sourceMax] into [rMin..rMax]
+    const scale = (val, srcMax) => rMin + ((val / srcMax) * (rMax - rMin));
 
     getOrCreate("chartRadar", "radar", {
         data: {
@@ -1117,9 +1126,9 @@ function renderRadarChart() {
                 data: [
                     a.adjustedScore,
                     a.avgScore,
-                    (a.appearances / maxApp) * rMax,
-                    (a.albumCount / maxAlbums) * rMax,
-                    rMax - (a.maxRating - a.minRating), // consistency = small range is good
+                    scale(a.appearances, maxApp),
+                    scale(a.albumCount, maxAlbums),
+                    scale(maxApp - (a.maxRating - a.minRating), maxApp), // consistency = small range is good
                 ],
                 borderColor: COLORS[i],
                 backgroundColor: COLORS[i] + "22",
@@ -1130,9 +1139,10 @@ function renderRadarChart() {
             responsive: true,
             scales: {
                 r: {
-                    beginAtZero: true,
+                    beginAtZero: false,
+                    min: rMin,
                     max: rMax,
-                    ticks: { stepSize: 2, display: false },
+                    ticks: { stepSize: Math.ceil((rMax - rMin) / 5) || 1, display: false },
                     grid: { color: "rgba(255,255,255,0.06)" },
                     angleLines: { color: "rgba(255,255,255,0.06)" },
                 },
@@ -1141,211 +1151,583 @@ function renderRadarChart() {
     });
 }
 
-// ─── Custom Graph Builder ──────────────────────────────────────
-function initCustomBuilder() {
-    document.getElementById("customGenerate").addEventListener("click", generateCustomChart);
+// ─── Python Graph Builder ──────────────────────────────────────
+const TEMPLATES = {
+    "bar_avg_artist": {
+        label: "📊 Avg Rating by Artist (Top 15)",
+        code: `top = df.groupby('artist')['rating'].mean().nlargest(15)
+top.plot.barh(color='#8b5cf6')
+plt.title('Top 15 Artists by Avg Rating')
+plt.xlabel('Average Rating')
+plt.tight_layout()`,
+    },
+    "scatter_year_rating": {
+        label: "🔵 Rating vs Release Year",
+        code: `years = df[df['year'].str.len() == 4].copy()
+years['year_num'] = years['year'].astype(int)
+plt.scatter(years['year_num'], years['rating'], alpha=0.4, c='#8b5cf6', s=20)
+plt.xlabel('Release Year')
+plt.ylabel('Rating')
+plt.title('Rating vs Release Year')
+plt.tight_layout()`,
+    },
+    "hist_ratings": {
+        label: "📈 Rating Distribution",
+        code: `df['rating'].hist(bins=20, color='#8b5cf6', edgecolor='#1a1a26')
+plt.title('Rating Distribution')
+plt.xlabel('Rating')
+plt.ylabel('Count')
+plt.tight_layout()`,
+    },
+    "plotly_hist": {
+        label: "✨ Interactive Rating Histogram (Plotly)",
+        code: `fig = px.histogram(df, x='rating', nbins=20,
+    title='Rating Distribution',
+    color_discrete_sequence=['#8b5cf6'])
+fig.update_layout(template='plotly_dark',
+    paper_bgcolor='#12121a', plot_bgcolor='#12121a')
+fig`,
+    },
+    "top_albums": {
+        label: "💿 Top Albums by Avg Rating",
+        code: `albums = df.groupby('album').agg(
+    avg=('rating', 'mean'),
+    count=('rating', 'count')
+).query('count >= 3').nlargest(15, 'avg')
+albums['avg'].plot.barh(color='#6366f1')
+plt.title('Top Albums (3+ songs)')
+plt.xlabel('Average Rating')
+plt.tight_layout()`,
+    },
+    "monthly_trend": {
+        label: "📅 Monthly Rating Trend",
+        code: `df_dated = df.dropna(subset=['ratedAt']).copy()
+df_dated['month'] = df_dated['ratedAt'].dt.to_period('M')
+monthly = df_dated.groupby('month')['rating'].mean()
+monthly.plot(marker='o', color='#8b5cf6')
+plt.title('Average Rating by Month')
+plt.ylabel('Average Rating')
+plt.xticks(rotation=45)
+plt.tight_layout()`,
+    },
+    "boxplot_top": {
+        label: "📦 Box Plot: Top 10 Artists",
+        code: `top10 = df['artist'].value_counts().nlargest(10).index
+subset = df[df['artist'].isin(top10)]
+subset.boxplot(column='rating', by='artist', vert=False,
+    patch_artist=True, figsize=(10, 6))
+plt.suptitle('')
+plt.title('Rating Spread: Top 10 Artists')
+plt.xlabel('Rating')
+plt.tight_layout()`,
+    },
+    "data_summary": {
+        label: "🔢 Data Summary Table",
+        code: `summary = df.groupby('artist')['rating'].agg(
+    ['count', 'mean', 'min', 'max', 'std']
+).round(2).sort_values('mean', ascending=False).head(20)
+summary.columns = ['Songs', 'Avg', 'Min', 'Max', 'StdDev']
+summary = summary.reset_index().rename(columns={'artist': 'Artist'})
+print(summary.to_string(index=False))`,
+    },
+    "pie_ratings": {
+        label: "🥧 Pie Chart: Rating Distribution",
+        code: `counts = df['rating'].value_counts().sort_index()
+counts.plot.pie(autopct='%1.0f%%', colors=[
+    '#6366f1','#8b5cf6','#a78bfa','#c4b5fd','#ddd6fe',
+    '#ede9fe','#f5f3ff','#818cf8','#4f46e5','#3730a3','#312e81'])
+plt.title('Rating Distribution')
+plt.ylabel('')
+plt.tight_layout()`,
+    },
+    "plotly_scatter": {
+        label: "✨ Interactive Artist Scatter (Plotly)",
+        code: `stats = df.groupby('artist').agg(
+    songs=('rating','count'), avg=('rating','mean')
+).query('songs >= 2').reset_index()
+fig = px.scatter(stats, x='songs', y='avg', hover_name='artist',
+    size='songs', color='avg', title='Artists: Songs vs Avg Rating',
+    color_continuous_scale='Viridis')
+fig.update_layout(template='plotly_dark',
+    paper_bgcolor='#12121a', plot_bgcolor='#12121a')
+fig`,
+    },
+    "yearly_count": {
+        label: "📅 Songs Rated by Year Released",
+        code: `years = df[df['year'].str.len() == 4]['year'].astype(int)
+years.hist(bins=range(years.min(), years.max()+2), color='#8b5cf6', edgecolor='#1a1a26')
+plt.title('Songs by Release Year')
+plt.xlabel('Year')
+plt.ylabel('Count')
+plt.tight_layout()`,
+    },
+    "tag_breakdown": {
+        label: "🏷️ Tag Breakdown",
+        code: `tags = df['tags'].explode().dropna()
+tags = tags[tags != '']
+if len(tags):
+    tags.value_counts().head(15).plot.barh(color='#6366f1')
+    plt.title('Top 15 Tags')
+    plt.xlabel('Count')
+    plt.tight_layout()
+else:
+    print('No tags found in your data.')`,
+    },
+    "rating_by_decade": {
+        label: "📻 Average Rating by Decade",
+        code: `decades = df[df['year'].str.len() == 4].copy()
+decades['decade'] = (decades['year'].astype(int) // 10 * 10).astype(str) + 's'
+avg = decades.groupby('decade')['rating'].mean().sort_index()
+avg.plot.bar(color='#8b5cf6', edgecolor='#1a1a26')
+plt.title('Average Rating by Decade')
+plt.ylabel('Avg Rating')
+plt.xticks(rotation=45)
+plt.tight_layout()`,
+    },
+    "std_artists": {
+        label: "📏 Most Consistent Artists (Low StdDev)",
+        code: `stats = df.groupby('artist')['rating'].agg(['mean','std','count'])
+stats = stats[stats['count'] >= 5].nsmallest(15, 'std')
+stats['mean'].plot.barh(color='#22c55e', xerr=stats['std'])
+plt.title('Most Consistent Artists (5+ songs)')
+plt.xlabel('Avg Rating (± StdDev)')
+plt.tight_layout()`,
+    },
+    "cumulative_rating": {
+        label: "📈 Cumulative Avg Rating Over Time",
+        code: `dated = df.dropna(subset=['ratedAt']).sort_values('ratedAt').copy()
+dated['cumulative_avg'] = dated['rating'].expanding().mean()
+plt.plot(dated['ratedAt'], dated['cumulative_avg'], color='#8b5cf6', linewidth=1.5)
+plt.title('Cumulative Average Rating Over Time')
+plt.ylabel('Cumulative Avg')
+plt.xticks(rotation=45)
+plt.tight_layout()`,
+    },
+    "heatmap_artist_album": {
+        label: "🌡️ Heatmap: Top Artists × Albums",
+        code: `top10 = df['artist'].value_counts().nlargest(8).index
+subset = df[df['artist'].isin(top10)]
+pivot = subset.pivot_table(index='artist', columns='album',
+    values='rating', aggfunc='mean')
+# Keep only albums with data
+pivot = pivot.dropna(axis=1, how='all').iloc[:, :10]
+plt.figure(figsize=(12, 6))
+plt.imshow(pivot.values, cmap='RdYlGn', aspect='auto')
+plt.yticks(range(len(pivot.index)), pivot.index)
+plt.xticks(range(len(pivot.columns)), pivot.columns, rotation=45, ha='right')
+plt.colorbar(label='Rating')
+plt.title('Artist × Album Ratings')
+plt.tight_layout()`,
+    },
+    "plotly_box": {
+        label: "✨ Interactive Box Plot (Plotly)",
+        code: `top12 = df['artist'].value_counts().nlargest(12).index
+subset = df[df['artist'].isin(top12)]
+fig = px.box(subset, x='rating', y='artist', color='artist',
+    title='Rating Spread: Top 12 Artists')
+fig.update_layout(template='plotly_dark', showlegend=False,
+    paper_bgcolor='#12121a', plot_bgcolor='#12121a')
+fig`,
+    },
+    "album_count_bar": {
+        label: "💿 Artists by Number of Albums",
+        code: `album_counts = df.groupby('artist')['album'].nunique().nlargest(15)
+album_counts.plot.barh(color='#6366f1')
+plt.title('Artists by Number of Albums')
+plt.xlabel('Number of Albums')
+plt.tight_layout()`,
+    },
+    "rating_notes": {
+        label: "📝 Songs with Notes",
+        code: `noted = df[df['notes'].str.len() > 0][['title','artist','rating','notes']]
+if len(noted):
+    print(f'{len(noted)} songs have notes:\\n')
+    print(noted.to_string(index=False))
+else:
+    print('No songs have notes.')`,
+    },
+};
+
+// ─── Autocomplete Hints ──────────────────────────────────────
+const HINTS = {
+    "df": [
+        "groupby(", "sort_values(", "head(", "tail(", "describe()",
+        "info()", "shape", "columns", "dtypes", "copy()",
+        "drop(", "dropna(", "fillna(", "merge(", "join(",
+        "query(", "filter(", "apply(", "map(", "replace(",
+        "value_counts()", "unique()", "nunique()", "count()",
+        "sum()", "mean()", "median()", "min()", "max()", "std()",
+        "plot", "plot.bar(", "plot.barh(", "plot.line(", "plot.scatter(",
+        "plot.hist(", "plot.box(", "plot.pie(",
+        "agg(", "pivot_table(", "melt(", "explode(",
+        "to_string()", "to_html()", "to_csv(",
+        "nlargest(", "nsmallest(", "sample(",
+        "reset_index()", "set_index(", "rename(",
+        "['title']", "['artist']", "['album']", "['year']",
+        "['rating']", "['ratedAt']", "['tags']", "['notes']",
+        "iloc[", "loc[",
+    ],
+    "plt": [
+        "title(", "xlabel(", "ylabel(", "legend()",
+        "figure(", "subplot(", "subplots(",
+        "show()", "savefig(", "close(", "tight_layout()",
+        "bar(", "barh(", "scatter(", "plot(", "hist(",
+        "pie(", "boxplot(", "violinplot(", "imshow(",
+        "colorbar(", "xticks(", "yticks(",
+        "xlim(", "ylim(", "grid(", "axhline(", "axvline(",
+        "annotate(", "text(", "suptitle(",
+        "rcParams",
+    ],
+    "px": [
+        "scatter(", "line(", "bar(", "histogram(", "box(",
+        "violin(", "strip(", "pie(", "sunburst(",
+        "treemap(", "heatmap(", "density_heatmap(",
+        "scatter_matrix(", "parallel_coordinates(",
+    ],
+    "go": [
+        "Figure(", "Scatter(", "Bar(", "Box(",
+        "Heatmap(", "Pie(", "Histogram(",
+        "Layout(", "Violin(",
+    ],
+    "np": [
+        "array(", "arange(", "linspace(",
+        "mean(", "median(", "std(", "sum(",
+        "min(", "max(", "abs(", "sqrt(",
+        "random", "zeros(", "ones(", "where(",
+        "corrcoef(", "polyfit(", "poly1d(",
+    ],
+    "fig": [
+        "update_layout(", "update_traces(",
+        "add_trace(", "add_annotation(",
+        "show()", "to_html(",
+    ],
+};
+
+function pythonHint(cm) {
+    const cur = cm.getCursor();
+    const line = cm.getLine(cur.line);
+    const end = cur.ch;
+
+    // Find the word/token before the cursor
+    let start = end;
+    while (start > 0 && /[\w.]/.test(line.charAt(start - 1))) start--;
+    const token = line.slice(start, end);
+
+    let completions = [];
+
+    // Check for dot-completion (e.g., "df.", "plt.", "df['artist'].")
+    const dotMatch = token.match(/^(\w+)\./);
+    if (dotMatch) {
+        const prefix = dotMatch[1];
+        const after = token.slice(prefix.length + 1);
+        const hints = HINTS[prefix] || [];
+        completions = hints
+            .filter(h => h.toLowerCase().startsWith(after.toLowerCase()))
+            .map(h => prefix + "." + h);
+        start = start; // keep start at beginning of full token
+    } else if (token.length >= 1) {
+        // Complete variable/module names
+        const allNames = ["df", "pd", "np", "plt", "px", "go", "fig",
+            "print(", "len(", "range(", "sorted(", "list(", "dict(", "str(", "int(", "float(",
+            "True", "False", "None", "import", "from", "as", "for", "in", "if", "else", "elif",
+        ];
+        completions = allNames.filter(n => n.toLowerCase().startsWith(token.toLowerCase()));
+    }
+
+    if (!completions.length) return;
+
+    return {
+        list: completions,
+        from: CodeMirror.Pos(cur.line, start),
+        to: CodeMirror.Pos(cur.line, end),
+    };
 }
 
-function generateCustomChart() {
-    const chartType = document.getElementById("customChartType").value;
-    const groupBy = document.getElementById("customGroupBy").value;
-    const metric = document.getElementById("customMetric").value;
-    const sortMode = document.getElementById("customSort").value;
-    const limit = parseInt(document.getElementById("customLimit").value) || 20;
-    const minRating = parseFloat(document.getElementById("customMinRating").value);
-    const maxRating = parseFloat(document.getElementById("customMaxRating").value);
+let cmEditor = null;
 
-    // Filter ratings
-    let filtered = [...rawRatings];
-    if (!isNaN(minRating)) filtered = filtered.filter((r) => r.rating >= minRating);
-    if (!isNaN(maxRating)) filtered = filtered.filter((r) => r.rating <= maxRating);
-
-    if (!filtered.length) {
-        document.getElementById("customEmpty").classList.remove("hidden");
-        return;
-    }
-    document.getElementById("customEmpty").classList.add("hidden");
-
-    // Group data
-    const groups = {};
-    filtered.forEach((r) => {
-        let key;
-        switch (groupBy) {
-            case "artist":
-                key = r.artist || "Unknown";
-                break;
-            case "album":
-                key = r.album || "Unknown";
-                break;
-            case "year":
-                key = r.year || "Unknown";
-                break;
-            case "rating":
-                key = String(r.rating);
-                break;
-            case "ratedMonth":
-                key = (r.ratedAt || "").substring(0, 7);
-                break;
-            case "tag":
-                const tags = r.tags && r.tags.length ? r.tags : ["(no tag)"];
-                tags.forEach((t) => {
-                    if (!groups[t]) groups[t] = { count: 0, totalRating: 0, scores: [] };
-                    groups[t].count++;
-                    groups[t].totalRating += r.rating || 0;
-                    groups[t].scores.push(r.rating || 0);
-                });
-                return;
-            default:
-                key = "Unknown";
-        }
-        if (!groups[key]) groups[key] = { count: 0, totalRating: 0, scores: [] };
-        groups[key].count++;
-        groups[key].totalRating += r.rating || 0;
-        groups[key].scores.push(r.rating || 0);
-    });
-
-    // Calculate metric
-    const globalMean = analyticsData.globalMean || 0;
-    let entries = Object.entries(groups).map(([label, d]) => {
-        let value;
-        switch (metric) {
-            case "count":
-                value = d.count;
-                break;
-            case "avgRating":
-                value = d.count ? d.totalRating / d.count : 0;
-                break;
-            case "totalScore":
-                value = d.totalRating;
-                break;
-            case "adjustedScore":
-                const avg = d.count ? d.totalRating / d.count : 0;
-                value = (d.count * avg + currentShrinkage * globalMean) / (d.count + currentShrinkage);
-                break;
-        }
-        return { label, value: Math.round(value * 100) / 100 };
-    });
-
-    // Sort
-    const [sortKey, sortDir] = sortMode.split("-");
-    entries.sort((a, b) => {
-        const av = sortKey === "label" ? a.label.toLowerCase() : a.value;
-        const bv = sortKey === "label" ? b.label.toLowerCase() : b.value;
-        if (av < bv) return sortDir === "asc" ? -1 : 1;
-        if (av > bv) return sortDir === "asc" ? 1 : -1;
-        return 0;
-    });
-
-    entries = entries.slice(0, limit);
-
-    // Chart title
-    const metricLabel = { count: "Count", avgRating: "Avg Rating", totalScore: "Total Score", adjustedScore: "Adjusted Score" }[metric];
-    const groupLabel = { artist: "Artist", album: "Album", year: "Year", rating: "Rating", ratedMonth: "Month", tag: "Tag" }[groupBy];
-    document.getElementById("customChartTitle").textContent = `${metricLabel} by ${groupLabel}`;
-
-    // Render
-    const labels = entries.map((e) => truncate(e.label, 20));
-    const values = entries.map((e) => e.value);
-    const colors = entries.map((_, i) => COLORS[i % COLORS.length]);
-
-    let type = chartType;
-    let opts = { responsive: true };
-
-    if (chartType === "horizontalBar") {
-        type = "bar";
-        opts.indexAxis = "y";
-    } else if (chartType === "pie") {
-        type = "doughnut";
-    } else if (chartType === "scatter") {
-        type = "scatter";
-        const scatterData = entries.map((e, i) => ({ x: i, y: e.value }));
-        getOrCreate("chartCustom", "scatter", {
-            data: {
-                datasets: [
-                    {
-                        label: metricLabel,
-                        data: scatterData,
-                        backgroundColor: COLORS[0],
-                        pointRadius: 6,
-                    },
-                ],
-            },
-            options: {
-                responsive: true,
-                scales: {
-                    x: {
-                        ticks: { callback: (v) => labels[v] || "" },
-                        title: { display: true, text: groupLabel },
-                    },
-                    y: { title: { display: true, text: metricLabel } },
+function initPythonEditor() {
+    // Initialize CodeMirror
+    const textarea = document.getElementById("pyEditor");
+    if (typeof CodeMirror !== "undefined") {
+        cmEditor = CodeMirror.fromTextArea(textarea, {
+            mode: "python",
+            theme: "material-darker",
+            lineNumbers: true,
+            indentUnit: 4,
+            tabSize: 4,
+            indentWithTabs: false,
+            lineWrapping: true,
+            matchBrackets: true,
+            hintOptions: { hint: pythonHint, completeSingle: false },
+            extraKeys: {
+                "Ctrl-Enter": runPythonCode,
+                "Cmd-Enter": runPythonCode,
+                "Ctrl-Space": (cm) => cm.showHint({ hint: pythonHint }),
+                Tab: (cm) => cm.replaceSelection("    ", "end"),
+                "'.'": (cm) => {
+                    cm.replaceSelection(".");
+                    setTimeout(() => cm.showHint({ hint: pythonHint }), 50);
                 },
             },
         });
-        return;
     }
 
-    getOrCreate("chartCustom", type, {
-        data: {
-            labels,
-            datasets: [
-                {
-                    label: metricLabel,
-                    data: values,
-                    backgroundColor: type === "doughnut" ? colors : colors[0] + "cc",
-                    borderColor: type === "line" ? COLORS[0] : undefined,
-                    borderRadius: type === "bar" ? 6 : undefined,
-                    tension: 0.3,
-                    fill: type === "line",
-                },
-            ],
-        },
-        options: opts,
+    // Wire Run button
+    document.getElementById("pyRun").addEventListener("click", runPythonCode);
+
+    // Populate templates dropdown
+    const select = document.getElementById("pyTemplates");
+    Object.entries(TEMPLATES).forEach(([key, t]) => {
+        const opt = document.createElement("option");
+        opt.value = key;
+        opt.textContent = t.label;
+        select.appendChild(opt);
     });
+    select.addEventListener("change", () => {
+        if (select.value && TEMPLATES[select.value]) {
+            if (cmEditor) cmEditor.setValue(TEMPLATES[select.value].code);
+            select.value = "";
+        }
+    });
+
+    // Tutorial toggle
+    document.getElementById("pyTutorialToggle").addEventListener("click", () => {
+        document.getElementById("pyTutorial").classList.toggle("hidden");
+    });
+    document.getElementById("pyTutorialClose").addEventListener("click", () => {
+        document.getElementById("pyTutorial").classList.add("hidden");
+    });
+
+    // Save button
+    document.getElementById("pySave").addEventListener("click", saveCurrentChart);
+
+    // Load data preview
+    loadDataPreview();
 }
 
-// ─── Smart Custom Chart Validation ─────────────────────────────
-function initCustomValidation() {
-    const chartTypeEl = document.getElementById("customChartType");
-    const groupByEl = document.getElementById("customGroupBy");
-    const metricEl = document.getElementById("customMetric");
+async function saveCurrentChart() {
+    const code = cmEditor ? cmEditor.getValue() : document.getElementById("pyEditor").value;
+    if (!code.trim()) return;
 
-    // When chart type changes, update available combos
-    chartTypeEl.addEventListener("change", updateCustomOptions);
-    groupByEl.addEventListener("change", updateCustomOptions);
-    updateCustomOptions();
+    const title = prompt("Name this chart:");
+    if (!title || !title.trim()) return;
+
+    try {
+        const res = await fetch("/api/analytics/charts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title: title.trim(), code }),
+        });
+        const data = await res.json();
+        if (data.error) {
+            alert("Error saving: " + data.error);
+        } else {
+            // Show toast
+            const status = document.getElementById("pyStatus");
+            status.textContent = "Saved ✓";
+            status.className = "editor-status";
+            setTimeout(() => { status.textContent = ""; }, 2000);
+            // Reload saved charts in Charts tab
+            loadSavedCharts();
+        }
+    } catch (err) {
+        alert("Error saving chart: " + err.message);
+    }
 }
 
-function updateCustomOptions() {
-    const chartTypeEl = document.getElementById("customChartType");
-    const groupBy = document.getElementById("customGroupBy").value;
-    const metricEl = document.getElementById("customMetric");
+async function loadSavedCharts() {
+    const container = document.getElementById("savedChartsContainer");
+    if (!container) return;
 
-    // Scatter only makes sense with numeric group-by (year, rating)
-    // Line only makes sense with ordered axes (year, ratedMonth, rating)
+    try {
+        const res = await fetch("/api/analytics/charts");
+        const charts = await res.json();
 
-    const orderedGroups = ["year", "ratedMonth", "rating"];
-    const isOrdered = orderedGroups.includes(groupBy);
+        if (!charts.length) {
+            container.innerHTML = "";
+            return;
+        }
 
-    // Disable line chart when group-by is unordered (artist names, albums, tags)
-    const lineOpt = chartTypeEl.querySelector('option[value="line"]');
-    if (lineOpt) lineOpt.disabled = !isOrdered;
+        container.innerHTML = `<h3 class="saved-charts-heading">📌 Saved Charts</h3>
+            <div class="charts-grid" id="savedChartsGrid"></div>`;
+        const grid = document.getElementById("savedChartsGrid");
 
-    // Disable scatter when group-by is unordered
-    const scatterOpt = chartTypeEl.querySelector('option[value="scatter"]');
-    if (scatterOpt) scatterOpt.disabled = !isOrdered;
+        for (const chart of charts) {
+            const card = document.createElement("div");
+            card.className = "chart-card saved-chart-card";
+            card.innerHTML = `
+                <div class="saved-chart-header">
+                    <h3>${escapeHtml(chart.title)}</h3>
+                    <div class="saved-chart-actions">
+                        <button class="btn-edit-chart" title="Edit in editor">✏️</button>
+                        <button class="btn-delete-chart" title="Delete chart" data-id="${chart.id}">&times;</button>
+                    </div>
+                </div>
+                <div class="saved-chart-output" id="saved-${chart.id}">
+                    <div class="output-placeholder">Loading...</div>
+                </div>`;
+            grid.appendChild(card);
 
-    // If current chart type is now disabled, switch to bar
-    if (chartTypeEl.selectedOptions[0]?.disabled) {
-        chartTypeEl.value = "bar";
+            // Edit handler — load code into editor and switch to Custom Graph tab
+            card.querySelector(".btn-edit-chart").addEventListener("click", () => {
+                if (cmEditor) cmEditor.setValue(chart.code);
+                // Switch to Custom Graph tab
+                document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+                document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+                const customBtn = [...document.querySelectorAll(".tab-btn")].find(b => b.textContent.trim() === "Custom Graph");
+                if (customBtn) customBtn.classList.add("active");
+                document.getElementById("tabCustom").classList.add("active");
+                // Focus editor
+                setTimeout(() => cmEditor && cmEditor.focus(), 100);
+            });
+
+            // Delete handler
+            card.querySelector(".btn-delete-chart").addEventListener("click", async (e) => {
+                if (!confirm(`Delete "${chart.title}"?`)) return;
+                await fetch(`/api/analytics/charts/${chart.id}`, { method: "DELETE" });
+                loadSavedCharts();
+            });
+
+            // Execute the chart code
+            renderSavedChart(chart);
+        }
+    } catch { /* ignore */ }
+}
+
+async function renderSavedChart(chart) {
+    const output = document.getElementById(`saved-${chart.id}`);
+    if (!output) return;
+
+    try {
+        const res = await fetch("/api/analytics/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: chart.code }),
+        });
+        const data = await res.json();
+        output.innerHTML = "";
+
+        if (data.plotly) {
+            const div = document.createElement("div");
+            div.className = "output-plotly";
+            output.appendChild(div);
+            Plotly.newPlot(div, data.plotly.data || [], {
+                ...(data.plotly.layout || {}),
+                paper_bgcolor: "#12121a",
+                plot_bgcolor: "#12121a",
+                font: { color: "#a1a1aa" },
+            }, { responsive: true });
+        } else if (data.image) {
+            output.innerHTML = `<img src="data:image/png;base64,${data.image}" alt="${escapeHtml(chart.title)}" style="max-width:100%;border-radius:6px">`;
+        } else if (data.stdout) {
+            output.innerHTML = `<div class="output-stdout">${escapeHtml(data.stdout)}</div>`;
+        } else if (data.error) {
+            output.innerHTML = `<div class="output-error">${escapeHtml(data.error)}</div>`;
+        } else {
+            output.innerHTML = '<div class="output-placeholder">No output</div>';
+        }
+    } catch {
+        output.innerHTML = '<div class="output-error">Failed to render chart</div>';
     }
+}
 
-    // Adjusted Score doesn't make sense when grouping by rating or ratedMonth
-    const adjOpt = metricEl.querySelector('option[value="adjustedScore"]');
-    if (adjOpt) adjOpt.disabled = ["rating", "ratedMonth"].includes(groupBy);
+async function runPythonCode() {
+    const code = cmEditor ? cmEditor.getValue() : document.getElementById("pyEditor").value;
+    const status = document.getElementById("pyStatus");
+    const output = document.getElementById("pyOutput");
 
-    if (metricEl.selectedOptions[0]?.disabled) {
-        metricEl.value = "count";
+    status.textContent = "Running...";
+    status.className = "editor-status running";
+    output.innerHTML = '<div class="output-placeholder">⏳ Executing...</div>';
+
+    try {
+        const res = await fetch("/api/analytics/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code }),
+        });
+        const data = await res.json();
+
+        output.innerHTML = "";
+
+        // Show error
+        if (data.error) {
+            output.innerHTML += `<div class="output-error">${escapeHtml(data.error)}</div>`;
+            status.textContent = "Error";
+            status.className = "editor-status error";
+        } else {
+            status.textContent = "Done";
+            status.className = "editor-status";
+        }
+
+        // Show plotly chart
+        if (data.plotly) {
+            const div = document.createElement("div");
+            div.className = "output-plotly";
+            output.appendChild(div);
+            Plotly.newPlot(div, data.plotly.data || [], {
+                ...(data.plotly.layout || {}),
+                paper_bgcolor: "#12121a",
+                plot_bgcolor: "#12121a",
+                font: { color: "#a1a1aa" },
+            }, { responsive: true });
+        }
+
+        // Show image
+        if (data.image) {
+            output.innerHTML += `<div class="output-image"><img src="data:image/png;base64,${data.image}" alt="Chart output"></div>`;
+        }
+
+        // Show table
+        if (data.table) {
+            output.innerHTML += `<div class="output-table">${data.table}</div>`;
+        }
+
+        // Show stdout
+        if (data.stdout && data.stdout.trim()) {
+            output.innerHTML += `<div class="output-stdout">${escapeHtml(data.stdout)}</div>`;
+        }
+
+        // If nothing rendered
+        if (!data.image && !data.plotly && !data.table && !data.stdout && !data.error) {
+            output.innerHTML = '<div class="output-placeholder">Code executed successfully (no output). Use plt, plotly, print(), or return a DataFrame.</div>';
+        }
+
+    } catch (err) {
+        output.innerHTML = `<div class="output-error">Network error: ${escapeHtml(err.message)}</div>`;
+        status.textContent = "Error";
+        status.className = "editor-status error";
     }
+}
+
+function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+async function loadDataPreview() {
+    try {
+        const res = await fetch("/api/analytics/csv?limit=50&offset=0");
+        const data = await res.json();
+
+        document.getElementById("dataCount").textContent = `(${data.total} songs)`;
+
+        const table = document.getElementById("dataTable");
+        const thead = table.querySelector("thead");
+        const tbody = table.querySelector("tbody");
+
+        if (!data.rows.length) return;
+
+        // Headers
+        const cols = Object.keys(data.rows[0]);
+        thead.innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr>`;
+
+        // Rows
+        tbody.innerHTML = data.rows.map(row =>
+            `<tr>${cols.map(c => `<td title="${escapeHtml(String(row[c] || ''))}">${escapeHtml(String(row[c] || ''))}</td>`).join("")}</tr>`
+        ).join("");
+    } catch { /* ignore */ }
 }
 
 // ─── New Charts: Cumulative + Tags ─────────────────────────────

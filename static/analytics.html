@@ -16,6 +16,15 @@
     <meta name="theme-color" content="#8b5cf6">
     <link rel="icon" href="/icon-192.png" type="image/png">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <!-- CodeMirror -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5/lib/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5/theme/material-darker.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5/addon/hint/show-hint.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5/lib/codemirror.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5/mode/python/python.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5/addon/hint/show-hint.min.js"></script>
+    <!-- Plotly -->
+    <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2/plotly.min.js"></script>
 </head>
 
 <body>
@@ -249,71 +258,98 @@
                     <canvas id="chartTags"></canvas>
                 </div>
             </div>
+            <!-- Saved Charts -->
+            <div id="savedChartsContainer"></div>
         </section>
 
-        <!-- ═══ Custom Graph Tab ═══ -->
+        <!-- ═══ Python Graph Builder Tab ═══ -->
         <section class="tab-panel" id="tabCustom">
-            <div class="custom-builder">
-                <div class="builder-controls">
-                    <div class="builder-field">
-                        <label>Chart Type</label>
-                        <select id="customChartType">
-                            <option value="bar">Bar</option>
-                            <option value="horizontalBar">Horizontal Bar</option>
-                            <option value="line">Line</option>
-                            <option value="pie">Pie / Doughnut</option>
-                            <option value="scatter">Scatter</option>
+            <!-- Data Viewer (collapsible) -->
+            <details class="data-viewer" id="dataViewer">
+                <summary>📊 Data Viewer <span class="data-count" id="dataCount"></span></summary>
+                <div class="data-table-wrap" id="dataTableWrap">
+                    <table class="data-table" id="dataTable">
+                        <thead></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </details>
+
+            <div class="python-editor-layout">
+                <!-- Editor pane -->
+                <div class="editor-pane">
+                    <div class="editor-toolbar">
+                        <button class="btn-primary btn-run" id="pyRun" title="Run code (Ctrl+Enter)">▶ Run</button>
+                        <select class="select-sort" id="pyTemplates" title="Load a template">
+                            <option value="">📝 Templates...</option>
                         </select>
+                        <button class="btn-sm btn-save" id="pySave" title="Save chart to dashboard">💾 Save</button>
+                        <button class="btn-sm btn-tutorial" id="pyTutorialToggle" title="Quick reference">❓
+                            Reference</button>
+                        <span class="editor-status" id="pyStatus"></span>
                     </div>
-                    <div class="builder-field">
-                        <label>Group By (X-axis)</label>
-                        <select id="customGroupBy">
-                            <option value="artist">Artist</option>
-                            <option value="album">Album</option>
-                            <option value="year">Release Year</option>
-                            <option value="rating">Rating Value</option>
-                            <option value="ratedMonth">Month Rated</option>
-                            <option value="tag">Tag</option>
-                        </select>
-                    </div>
-                    <div class="builder-field">
-                        <label>Metric (Y-axis)</label>
-                        <select id="customMetric">
-                            <option value="count">Count</option>
-                            <option value="avgRating">Avg Rating</option>
-                            <option value="totalScore">Total Score</option>
-                            <option value="adjustedScore">Adjusted Score</option>
-                        </select>
-                    </div>
-                    <div class="builder-field">
-                        <label>Sort</label>
-                        <select id="customSort">
-                            <option value="value-desc">Highest First</option>
-                            <option value="value-asc">Lowest First</option>
-                            <option value="label-asc">Name A-Z</option>
-                            <option value="label-desc">Name Z-A</option>
-                        </select>
-                    </div>
-                    <div class="builder-field">
-                        <label>Max Items</label>
-                        <input type="number" id="customLimit" value="20" min="1" max="100" class="input-sm-num">
-                    </div>
-                    <div class="builder-field">
-                        <label>Min Rating</label>
-                        <input type="number" id="customMinRating" class="input-sm-num" placeholder="Any">
-                    </div>
-                    <div class="builder-field">
-                        <label>Max Rating</label>
-                        <input type="number" id="customMaxRating" class="input-sm-num" placeholder="Any">
-                    </div>
-                    <div class="builder-field builder-action">
-                        <button class="btn-primary" id="customGenerate">Generate</button>
+                    <textarea id="pyEditor">## Your ratings are in `df` (pandas DataFrame)
+# Columns: title, artist, album, year, rating, ratedAt, tags, notes
+# Available: pandas (pd), numpy (np), matplotlib (plt),
+#            plotly.express (px), plotly.graph_objects (go)
+
+top = df.groupby('artist')['rating'].mean().nlargest(15)
+top.plot.barh(color='#8b5cf6')
+plt.title('Top 15 Artists by Avg Rating')
+plt.xlabel('Average Rating')
+plt.tight_layout()
+</textarea>
+                </div>
+
+                <!-- Output pane -->
+                <div class="editor-output" id="pyOutput">
+                    <div class="output-placeholder">Press <kbd>▶ Run</kbd> or <kbd>Ctrl+Enter</kbd> to execute your code
                     </div>
                 </div>
-                <div class="chart-card chart-card-custom">
-                    <h3 id="customChartTitle">Custom Chart</h3>
-                    <canvas id="chartCustom"></canvas>
-                    <p class="chart-empty hidden" id="customEmpty">Configure options above and click Generate.</p>
+            </div>
+
+            <!-- Tutorial panel (hidden) -->
+            <div class="tutorial-panel hidden" id="pyTutorial">
+                <div class="tutorial-header">
+                    <h4>Quick Reference</h4>
+                    <button class="btn-close" id="pyTutorialClose">&times;</button>
+                </div>
+                <div class="tutorial-body">
+                    <h5>Pre-loaded Variables</h5>
+                    <pre>df  — pandas DataFrame with your ratings
+pd  — pandas
+np  — numpy
+plt — matplotlib.pyplot
+px  — plotly.express
+go  — plotly.graph_objects</pre>
+                    <h5>DataFrame Columns</h5>
+                    <pre>title, artist, album, year (str),
+rating (int), ratedAt (datetime),
+tags (list), notes (str)</pre>
+                    <h5>Matplotlib Example</h5>
+                    <pre>df['rating'].hist(bins=20, color='#8b5cf6')
+plt.title('Rating Distribution')
+plt.tight_layout()</pre>
+                    <h5>Plotly Example</h5>
+                    <pre>fig = px.histogram(df, x='rating',
+    title='Rating Distribution')
+fig  # return the figure</pre>
+                    <h5>Data Analysis</h5>
+                    <pre># Print a summary table
+print(df.groupby('artist')['rating']
+    .describe().head(10))
+
+# Return a DataFrame (shows as table)
+df.groupby('artist')['rating'].mean()
+    .nlargest(20)</pre>
+                    <h5>Tips</h5>
+                    <ul>
+                        <li>Use <code>plt.</code> for matplotlib charts</li>
+                        <li>Return a plotly <code>fig</code> for interactive charts</li>
+                        <li>Use <code>print()</code> to output text</li>
+                        <li>Return a DataFrame to see it as a table</li>
+                        <li>30-second timeout for safety</li>
+                    </ul>
                 </div>
             </div>
         </section>

@@ -186,12 +186,14 @@
                 </button>
             </div>
         </div>
-        <!-- Tunnel URL badge (hidden by default, shown when tunnel is active) -->
-        <div class="tunnel-badge hidden" id="tunnelBadge" title="Click to copy">
-            <span class="tunnel-icon">🌐</span>
-            <span class="tunnel-url" id="tunnelUrl"></span>
-        </div>
     </header>
+
+    <!-- Tunnel URL floating badge (bottom-right, expands on hover) -->
+    <div class="tunnel-badge hidden" id="tunnelBadge" title="Click to copy link for your phone">
+        <span class="tunnel-icon">📱</span>
+        <span class="tunnel-label">Phone link</span>
+        <span class="tunnel-url" id="tunnelUrl"></span>
+    </div>
 
     <!-- ─── Main Content ───────────────────────────────────── -->
     <main class="app-main">

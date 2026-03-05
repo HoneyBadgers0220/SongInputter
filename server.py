@@ -500,6 +500,184 @@ def api_tunnel_url():
     return jsonify({"url": None})
 
 
+# ─── Python Graph Builder ──────────────────────────────────────────────────
+@app.route("/api/analytics/csv")
+def api_analytics_csv():
+    """Return raw ratings as paginated JSON for the data viewer."""
+    ratings = _load_ratings()
+    limit = min(int(request.args.get("limit", 100)), 500)
+    offset = int(request.args.get("offset", 0))
+    # Build simplified rows
+    rows = []
+    for r in ratings[offset:offset + limit]:
+        rows.append({
+            "title": r.get("title", ""),
+            "artist": r.get("artist", ""),
+            "album": r.get("album", ""),
+            "year": r.get("year", ""),
+            "rating": r.get("rating", ""),
+            "ratedAt": (r.get("ratedAt") or "")[:10],
+            "tags": ", ".join(r.get("tags") or []),
+            "notes": r.get("notes", ""),
+        })
+    return jsonify({"rows": rows, "total": len(ratings)})
+
+
+@app.route("/api/analytics/execute", methods=["POST"])
+def api_analytics_execute():
+    """Execute user Python code against ratings data. Returns image/plotly/table/stdout."""
+    import threading, io, base64, traceback
+
+    data = request.get_json()
+    if not data or "code" not in data:
+        return jsonify({"error": "No code provided"}), 400
+
+    code = data["code"].strip()
+    if not code:
+        return jsonify({"error": "Empty code"}), 400
+
+    # Build DataFrame
+    ratings = _load_ratings()
+    result = {"image": None, "plotly": None, "table": None, "stdout": "", "error": None}
+
+    def run_code():
+        try:
+            import pandas as pd
+            import numpy as np
+            import matplotlib
+            matplotlib.use("Agg")  # non-interactive backend
+            import matplotlib.pyplot as plt
+            import plotly.express as px
+            import plotly.graph_objects as go
+            import plotly.io as pio
+
+            # Force plotly to not open a browser — render as JSON only
+            pio.renderers.default = "json"
+
+            df = pd.DataFrame(ratings)
+            # Clean up columns
+            if "rating" in df.columns:
+                df["rating"] = pd.to_numeric(df["rating"], errors="coerce")
+            if "year" in df.columns:
+                df["year"] = df["year"].fillna("").astype(str)
+            if "ratedAt" in df.columns:
+                df["ratedAt"] = pd.to_datetime(df["ratedAt"], errors="coerce")
+            if "tags" in df.columns:
+                df["tags"] = df["tags"].apply(lambda x: x if isinstance(x, list) else [])
+
+            # Capture stdout
+            stdout_buf = io.StringIO()
+
+            # Namespace for exec
+            ns = {
+                "df": df, "pd": pd, "np": np, "plt": plt,
+                "px": px, "go": go,
+                "print": lambda *a, **kw: __builtins__["print"](*a, file=stdout_buf, **kw) if isinstance(__builtins__, dict) else print(*a, file=stdout_buf, **kw),
+            }
+
+            # Override print to capture
+            import builtins
+            original_print = builtins.print
+            def captured_print(*a, **kw):
+                kw["file"] = stdout_buf
+                original_print(*a, **kw)
+            ns["print"] = captured_print
+
+            exec(code, ns)
+
+            result["stdout"] = stdout_buf.getvalue()
+
+            # Check for plotly figure
+            import json as _json
+            for val in ns.values():
+                if hasattr(val, "to_plotly_json") and hasattr(val, "to_json"):
+                    result["plotly"] = _json.loads(val.to_json())
+                    break
+
+            # Check for matplotlib figure
+            figs = [plt.figure(n) for n in plt.get_fignums()]
+            if figs:
+                buf = io.BytesIO()
+                figs[-1].savefig(buf, format="png", dpi=150, bbox_inches="tight",
+                                facecolor="#12121a", edgecolor="none")
+                buf.seek(0)
+                result["image"] = base64.b64encode(buf.read()).decode("utf-8")
+                plt.close("all")
+
+            # Check if last expression is a DataFrame — render as HTML table
+            # Try to get the last expression value
+            lines = code.strip().split("\n")
+            last_line = lines[-1].strip()
+            if last_line and not last_line.startswith("#") and "=" not in last_line and not last_line.startswith(("import", "from", "plt.", "fig.", "print")):
+                try:
+                    val = eval(last_line, ns)
+                    if hasattr(val, "to_html"):
+                        result["table"] = val.to_html(classes="df-table", max_rows=100)
+                    elif hasattr(val, "to_json") and hasattr(val, "to_plotly_json"):
+                        result["plotly"] = _json.loads(val.to_json())
+                except Exception:
+                    pass
+
+        except Exception as e:
+            result["error"] = traceback.format_exc()
+
+    # Run with timeout
+    thread = threading.Thread(target=run_code)
+    thread.start()
+    thread.join(timeout=30)
+    if thread.is_alive():
+        result["error"] = "Execution timed out (30 second limit)."
+        return jsonify(result), 408
+
+    return jsonify(result)
+
+
+SAVED_CHARTS_FILE = DATA_DIR / "saved_charts.json"
+
+def _load_saved_charts():
+    if SAVED_CHARTS_FILE.exists():
+        return json.loads(SAVED_CHARTS_FILE.read_text(encoding="utf-8"))
+    return []
+
+def _save_saved_charts(charts):
+    SAVED_CHARTS_FILE.write_text(json.dumps(charts, indent=2), encoding="utf-8")
+
+
+@app.route("/api/analytics/charts", methods=["GET"])
+def api_get_saved_charts():
+    """Return all saved charts."""
+    return jsonify(_load_saved_charts())
+
+
+@app.route("/api/analytics/charts", methods=["POST"])
+def api_save_chart():
+    """Save a new chart (title + code)."""
+    import uuid, datetime
+    data = request.get_json()
+    if not data or "title" not in data or "code" not in data:
+        return jsonify({"error": "title and code required"}), 400
+
+    charts = _load_saved_charts()
+    chart = {
+        "id": str(uuid.uuid4())[:8],
+        "title": data["title"].strip(),
+        "code": data["code"].strip(),
+        "savedAt": datetime.datetime.now().isoformat(),
+    }
+    charts.append(chart)
+    _save_saved_charts(charts)
+    return jsonify(chart)
+
+
+@app.route("/api/analytics/charts/<chart_id>", methods=["DELETE"])
+def api_delete_chart(chart_id):
+    """Delete a saved chart by id."""
+    charts = _load_saved_charts()
+    charts = [c for c in charts if c["id"] != chart_id]
+    _save_saved_charts(charts)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/setup/headers", methods=["POST"])
 def api_setup_headers():
     """Accept pasted headers and generate browser.json."""

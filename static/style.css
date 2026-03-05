@@ -2002,22 +2002,31 @@ body::before {
 
 /* ─── Tunnel URL Badge ──────────────────────────────────── */
 .tunnel-badge {
+    position: fixed;
+    bottom: 12px;
+    right: 12px;
     display: flex;
     align-items: center;
-    justify-content: center;
     gap: 6px;
-    padding: 3px 0;
-    background: var(--bg-surface);
-    border-bottom: 1px solid var(--border-subtle);
+    padding: 6px 10px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-glass);
+    border-radius: 20px;
     font-size: 11px;
     color: var(--text-muted);
     cursor: pointer;
-    transition: color 0.15s;
-    user-select: all;
+    transition: all 0.25s ease;
+    z-index: 900;
+    max-width: 38px;
+    overflow: hidden;
+    white-space: nowrap;
+    box-shadow: var(--shadow-card);
 }
 
 .tunnel-badge:hover {
+    max-width: 400px;
     color: var(--text-secondary);
+    border-color: var(--accent-primary);
 }
 
 .tunnel-badge.hidden {
@@ -2025,10 +2034,21 @@ body::before {
 }
 
 .tunnel-icon {
-    font-size: 12px;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+
+.tunnel-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-accent);
+    font-weight: 600;
+    flex-shrink: 0;
 }
 
 .tunnel-url {
     font-family: 'Courier New', monospace;
     letter-spacing: -0.3px;
+    flex-shrink: 0;
 }
