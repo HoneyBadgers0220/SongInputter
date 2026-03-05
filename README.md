@@ -21,6 +21,8 @@ Rate songs playing on YouTube Music in real time. See the artist, song title, al
 - **Export** — CSV (with album art URLs) and JSON export for data analysis
 - **Summary stats** — Average rating, top artist, rating distribution
 - **Analytics page** — Detailed charts, Bayesian-adjusted artist rankings, data import, and smart search at `/analytics`
+- **Python graph builder** — Write custom charts with pandas, matplotlib, and plotly in a built-in code editor with autocomplete and 20+ templates
+- **Save charts** — Save custom charts to the Charts dashboard; they re-execute against latest data on each load
 - **Phone access** — Use on your phone via local network or Cloudflare Tunnel
 - **PWA** — Install as an app on your phone's home screen
 
@@ -41,7 +43,7 @@ py setup.py
 ```
 
 The setup wizard will:
-1. Install Python dependencies (`ytmusicapi`, `flask`)
+1. Install Python dependencies (`ytmusicapi`, `flask`, `pandas`, `matplotlib`, `numpy`, `plotly`)
 2. Walk you through browser authentication (see below)
 3. Verify the connection
 
@@ -163,7 +165,7 @@ Accessible via the gear icon in the app header:
 
 ## Data
 
-Ratings are stored in `data/ratings.json`. Unrated songs are in `data/unrated.json`. Settings are in `data/settings.json`.
+Ratings are stored in `data/ratings.json`. Unrated songs are in `data/unrated.json`. Settings are in `data/settings.json`. Saved custom charts are in `data/saved_charts.json`.
 
 | Field | Description |
 |-------|-------------|
@@ -203,6 +205,11 @@ Both formats include album art URLs.
 | `/api/unrated/all` | DELETE | Dismiss all unrated songs |
 | `/api/unrated/<id>/rate` | POST | Rate an unrated song (moves to rated) |
 | `/api/analytics` | GET | Aggregated artist stats with Bayesian scoring |
+| `/api/analytics/execute` | POST | Execute Python code against ratings DataFrame |
+| `/api/analytics/csv` | GET | Paginated raw ratings data (`?limit=`, `?offset=`) |
+| `/api/analytics/charts` | GET | List saved custom charts |
+| `/api/analytics/charts` | POST | Save a custom chart (title + code) |
+| `/api/analytics/charts/<id>` | DELETE | Delete a saved chart |
 | `/api/settings` | GET | Current settings |
 | `/api/settings` | POST | Update settings |
 | `/api/enrich/<albumId>` | GET | Fetch original album release year |
@@ -221,10 +228,12 @@ Antigravity/
 ├── Start SongRate.bat     # Double-click launcher
 ├── browser.json           # Auth credentials (gitignored)
 ├── config.json            # App config
+├── requirements.txt       # Python dependencies
 ├── data/
 │   ├── ratings.json       # Saved ratings
 │   ├── unrated.json       # Skipped/unrated songs
-│   └── settings.json      # App settings
+│   ├── settings.json      # App settings
+│   └── saved_charts.json  # Custom saved charts
 └── static/
     ├── index.html         # Frontend UI
     ├── app.js             # Frontend logic
